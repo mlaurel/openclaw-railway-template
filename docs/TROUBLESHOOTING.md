@@ -39,6 +39,16 @@ files to silence it**; they are the recovery inputs.
   from an exec shell. Whether Railway's Start Command replaces only the `CMD`
   (as this assumes) is **live-unverified**.
 
+## `railway config plan` proposes a destructive volume change
+
+`Update <volume> config.region` (or `config.sizeMB`) marked destructive means the
+volume's actual placement differs from `region` / `volumeSizeMB` in
+`.railway/railway.ts`. Don't apply it: Railway accepts the change and leaves the
+volume where it is (observed). Either set the constants to the volume's real
+values (`railway config pull --json` shows them), or move the service's region in
+the dashboard; the volume migrates with the service on its next deploy. See
+[DEPLOYMENT.md](DEPLOYMENT.md#1-create-the-railway-project).
+
 ## The deploy health check fails
 
 Railway calls `GET /startupz` on port 18789 with Host `healthcheck.railway.app`
@@ -87,10 +97,16 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 - Inside `railway ssh` you're root; `openclaw` runs as `node` automatically.
   Calling `node /app/openclaw.mjs` directly bypasses that and can create
   root-owned files.
-- If a command reports an unresolved `OPENCLAW_GATEWAY_TOKEN` SecretRef, the SSH
-  session didn't inherit the service's variables. **(live-unverified)** Load it
-  from the Gateway process for that shell:
-  `export OPENCLAW_GATEWAY_TOKEN="$(tr '\0' '\n' < /proc/1/environ | sed -n 's/^OPENCLAW_GATEWAY_TOKEN=//p')"`.
+- SSH sessions receive the service's Railway variables (verified on a live
+  deployment), so the CLI authenticates to the Gateway without extra setup.
+- `Host key verification failed`: `ssh.railway.com` isn't in `~/.ssh/known_hosts`.
+  See the SSH note under [Prerequisites](DEPLOYMENT.md#prerequisites).
+- `No registered SSH keys found`: `railway ssh keys add --key ~/.ssh/id_ed25519.pub`.
+  (`railway ssh keys github` can fail with "You do not have access to this
+  resource" when Railway's GitHub integration lacks access.)
+- `openclaw models status --probe` refuses to run while the Gateway holds the
+  state. Test the provider through the Gateway instead:
+  `openclaw agent --agent main --message "Reply with exactly: OK"`.
 - `openclaw security audit --deep` always reports `gateway.probe_failed (missing
   scope: operator.read)` on 2026.9.8, including on the unmodified upstream image.
   See [SECURITY.md](SECURITY.md#security-audit).

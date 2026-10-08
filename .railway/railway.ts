@@ -15,6 +15,12 @@ const environment = globalThis.process?.env ?? {};
 const sourceRepository = environment.OPENCLAW_RAILWAY_REPOSITORY ?? "<github-owner>/<repository>";
 const sourceBranch = environment.OPENCLAW_RAILWAY_BRANCH ?? "main";
 
+// Where both services and their volumes run. Declare the volume region and size
+// explicitly: Railway fills them in when it creates a volume, and an undeclared
+// value shows up in every later plan as a destructive change back to "unset".
+const region = environment.OPENCLAW_RAILWAY_REGION ?? "us-west2";
+const volumeSizeMB = 5000;
+
 export default defineRailway(() => {
   if (sourceRepository.startsWith("<")) {
     throw new Error(
@@ -22,8 +28,8 @@ export default defineRailway(() => {
     );
   }
 
-  const openclawState = volume("openclaw-state");
-  const tailscaleState = volume("tailscale-state");
+  const openclawState = volume("openclaw-state", { region, sizeMB: volumeSizeMB });
+  const tailscaleState = volume("tailscale-state", { region, sizeMB: volumeSizeMB });
 
   // The service name is load-bearing: tailscale/serve.json forwards to
   // openclaw.railway.internal, Railway's private DNS name for this service.
@@ -34,10 +40,10 @@ export default defineRailway(() => {
       dockerfilePath: "Dockerfile",
       watchPatterns: ["Dockerfile", "config/**", "scripts/**"],
     },
+    // OpenClaw runs one Gateway per state directory, and Railway cannot share a
+    // volume between replicas: exactly one instance, in the volume's region.
+    replicas: { [region]: 1 },
     deploy: {
-      // OpenClaw runs one Gateway per state directory, and Railway cannot
-      // share a volume between replicas.
-      numReplicas: 1,
       requiredMountPath: "/data",
       // /startupz is 200 once the Gateway admits traffic. It ignores channel
       // health, so a revoked Telegram token cannot fail every deploy.
@@ -54,6 +60,7 @@ export default defineRailway(() => {
     env: {
       PORT: "18789",
       OPENCLAW_GATEWAY_TOKEN: preserve(),
+      ANTHROPIC_API_KEY: preserve(),
     },
   });
 
@@ -64,8 +71,8 @@ export default defineRailway(() => {
       dockerfilePath: "tailscale/Dockerfile",
       watchPatterns: ["tailscale/**"],
     },
+    replicas: { [region]: 1 },
     deploy: {
-      numReplicas: 1,
       requiredMountPath: "/var/lib/tailscale",
       // containerboot's /healthz is 200 once the node has a tailnet address.
       healthcheckPath: "/healthz",

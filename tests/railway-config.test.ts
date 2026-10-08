@@ -27,6 +27,12 @@ function findService(name: string): Resource {
   return service;
 }
 
+// Total instances across regions; OpenClaw must run as exactly one Gateway.
+function instanceCount(service: Resource): number {
+  const regions = (service.deploy?.multiRegionConfig ?? {}) as Record<string, { numReplicas?: number }>;
+  return Object.values(regions).reduce((total, region) => total + (region.numReplicas ?? 0), 0);
+}
+
 function mountPaths(service: Resource): string[] {
   return Object.values(service.volumeAttachments ?? {}).map((attachment) => attachment.mountPath);
 }
@@ -44,7 +50,7 @@ test("defines exactly two services and two volumes", () => {
 test("openclaw runs one volume-backed, health-checked Gateway", () => {
   const openclaw = findService("openclaw");
   assert.equal(openclaw.build?.dockerfilePath, "Dockerfile");
-  assert.equal(openclaw.deploy?.numReplicas, 1);
+  assert.equal(instanceCount(openclaw), 1);
   assert.equal(openclaw.deploy?.requiredMountPath, "/data");
   assert.equal(openclaw.deploy?.healthcheckPath, "/startupz");
   assert.equal(openclaw.deploy?.restartPolicyType, "ALWAYS");
@@ -55,11 +61,24 @@ test("openclaw runs one volume-backed, health-checked Gateway", () => {
 test("tailscale keeps its node identity on a volume", () => {
   const tailscale = findService("tailscale");
   assert.equal(tailscale.build?.dockerfilePath, "tailscale/Dockerfile");
-  assert.equal(tailscale.deploy?.numReplicas, 1);
+  assert.equal(instanceCount(tailscale), 1);
   assert.equal(tailscale.deploy?.requiredMountPath, "/var/lib/tailscale");
   assert.equal(tailscale.deploy?.healthcheckPath, "/healthz");
   assert.deepEqual(tailscale.variables?.PORT, { type: "literal", value: "9002" });
   assert.deepEqual(mountPaths(tailscale), ["/var/lib/tailscale"]);
+});
+
+test("volumes declare region and size, and services run in the same region", () => {
+  for (const name of ["openclaw-state", "tailscale-state"]) {
+    const volume = resources.find((resource) => resource.type === "volume" && resource.name === name);
+    const config = volume?.config as { region?: string; sizeMB?: number } | undefined;
+    assert.ok(config?.region, `${name} declares a region`);
+    assert.ok(config?.sizeMB, `${name} declares a size`);
+    for (const serviceName of ["openclaw", "tailscale"]) {
+      const regions = Object.keys((findService(serviceName).deploy?.multiRegionConfig ?? {}) as object);
+      assert.deepEqual(regions, [config.region], `${serviceName} runs in the volume region`);
+    }
+  }
 });
 
 test("no service is exposed publicly", () => {

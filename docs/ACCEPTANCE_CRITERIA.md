@@ -41,8 +41,8 @@ used unchanged. The Tailscale container joined a real tailnet with an auth key
 | 3 | No custom setup HTTP server | Verified | Repository contains no server code; onboarding is OpenClaw's own CLI ([DEPLOYMENT.md](DEPLOYMENT.md) step 5, run locally). |
 | 4 | No unnecessary reverse proxy | Verified | The only hop is Tailscale Serve raw TCP forwarding; `tests/serve-config.test.sh` fails if `serve.json` defines HTTP handlers. |
 | 5 | No custom process supervisor | Verified | Only upstream `tini`; restarts are Railway's. External-supervisor mode confirmed: the Gateway exits 0 for restarts ("full process restart (supervisor restart)"). |
-| 6 | Railway manages container restarts | Live validation required | Config: `restartPolicyType: "ALWAYS"` (`tests/railway-config.test.ts`). Locally: a killed Gateway exits the container non-zero; graceful stop exits 0; a Docker `--restart always` container came back after onboarding's restart exit. |
-| 7 | Persistent configuration survives redeployment | Live validation required | Locally verified on a Docker volume: config change, pairing, and baseline-not-reapplied all survive stop/start and crash/start. Railway volume behavior not yet exercised. |
+| 6 | Railway manages container restarts | Verified (live) | Live: after onboarding changed `gateway.port`, the Gateway exited cleanly ("full process restart (supervisor restart)") and Railway restarted it, listening again 28 s later. Config: `restartPolicyType: "ALWAYS"`. Crash restart (`pkill -KILL`) verified locally; not yet repeated live. |
+| 7 | Persistent configuration survives redeployment | Verified (live) | Live: state on the `openclaw-state` volume survived a redeploy *and* a volume migration from `europe-west4` to `us-west2`; the baseline config was not rewritten. Pairing persistence verified locally and over a real tailnet. |
 | 8 | Gateway authentication is enforced | Verified | `--auth token` pinned; 401 without or with a wrong token from a remote peer; entrypoint refuses missing or short tokens; token-only clients without device identity get no operator scopes. |
 | 9 | The Gateway is not publicly exposed by default | Verified (config) / live check pending | `.railway/railway.ts` declares no domains or TCP proxies (tested); `serve.json` has no Funnel (tested). Confirm in the Railway dashboard after deploy. |
 | 10 | Tailscale provides authenticated private access | Verified with a real tailnet; Railway network pending | End-to-end test above: tailnet → Tailscale TLS → raw TCP forward → Gateway token auth and device pairing, with Docker DNS standing in for `openclaw.railway.internal`. Railway's own private DNS and dual-stack routing not yet exercised. |
@@ -51,14 +51,34 @@ used unchanged. The Tailscale container joined a real tailnet with an auth key
 | 13 | The macOS desktop app can connect | Live validation required | Workflow in [DESKTOP.md](DESKTOP.md), from the 2026.9.8 macOS docs. Gateway side tested with a non-loopback client. The app itself not run. |
 | 14 | Desktop device pairing works | Live validation required | Tested with a headless node over `wss://` through Tailscale: the request stays pending, `openclaw devices approve` admits it, and pairing survives restarts of both services. Mac app pairing not run. |
 | 15 | Telegram integration works | Live validation required | Tested with a dummy token: `TELEGRAM_BOT_TOKEN` enables Telegram with `dmPolicy: pairing` / `groupPolicy: allowlist`, the token never lands on the volume, `channels add --use-env` works, and a bad token makes `/readyz` 503 while `/startupz` stays 200. A real bot DM not yet tried. |
-| 16 | Railway health checks reflect actual Gateway availability | Verified locally / live pending | `/startupz` is 200 only after the Gateway admits traffic; it accepts Host `healthcheck.railway.app`; it ignores channel failures by design. Railway's own probe not yet exercised. |
+| 16 | Railway health checks reflect actual Gateway availability | Verified (live) | Railway marked every Gateway deploy SUCCESS only after `/startupz` returned 200 (including after migration). A token-less first deploy never became healthy and was replaced. `/startupz` ignores channel failures by design. |
 | 17 | Security auditing is documented | Verified | [SECURITY.md](SECURITY.md#security-audit). Tested: fresh boot → only `allowed_origins_required`; after `gateway.publicOrigin` → 0 critical, 0 warn. `--deep` adds upstream `gateway.probe_failed`, also seen on the unmodified official image. |
 | 18 | Docker builds are reproducible | Verified | Base images and BuildKit frontend pinned by digest; no package installs at build or run time; npm lockfile; GitHub Actions pinned to commit SHAs. |
 | 19 | Version upgrades require one authoritative version change | Verified | The `FROM` line is the only reference; the test derives the expected version from it. Dependabot updates tag and digest together. |
 | 20 | CI validates the deployment configuration | Verified | `.github/workflows/ci.yml` passed on GitHub on the first push (run 37742254091: static checks and image build/test both green) and on every push since. actionlint clean. |
 | 21 | Backup and rollback procedures are documented | Verified (docs) / restore live pending | [UPGRADING.md](UPGRADING.md). `openclaw backup create --verify` tested against a running Gateway. Railway backup restore not exercised. |
-| 22 | The repository can be deployed from GitHub to Railway | Live validation required | `.railway/railway.ts` type-checks and evaluates with `railway@3.13.0`; `railway config plan` against a real project not run. |
+| 22 | The repository can be deployed from GitHub to Railway | Verified (live) | `railway config plan` / `apply` with `.railway/railway.ts` created both services and volumes from `stevekinney/openclaw-railway-template@main`; both images built on Railway; the Gateway answered a real agent message through Anthropic. |
 | 23 | Suitable for a reusable public Railway template | Live validation required | Template composition documented ([DEPLOYMENT.md](DEPLOYMENT.md#publishing-as-a-railway-template)). MIT licensed (`LICENSE`); public repository. |
+
+## Live deployment (2026-10-08)
+
+Project `openclaw`, environment `production`, region `us-west2`. Done so far:
+
+- Steps 1–3 of the plan below: plan showed exactly two services and two volumes
+  with no domains; the Gateway deploy turned healthy (≈200 s, mostly pulling the
+  base image). The volume mounted root-owned and the entrypoint prepared it
+  without errors.
+- Step 2: `railway ssh` reaches the domainless service once an SSH key is
+  registered and `ssh.railway.com`'s host key is trusted. SSH sessions run as
+  root and **do** receive the service's Railway variables.
+- Step 3: onboarding with Anthropic succeeded; the Gateway restarted itself
+  through Railway; `openclaw agent --message` returned a model reply.
+- Found and fixed in `railway.ts`: undeclared volume region/size produced
+  destructive-looking plans, and `apply` cannot move a volume's region; the
+  service region must change instead (see TROUBLESHOOTING.md).
+
+Remaining: Tailscale on Railway (needs a tagged auth key), Mac app, Telegram,
+crash and backup drills.
 
 ## Live validation plan
 

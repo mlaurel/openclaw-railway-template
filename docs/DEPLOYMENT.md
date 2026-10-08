@@ -12,7 +12,10 @@ project or tailnet; see [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
   Railway GitHub app allowed to read your fork.
 - [Railway CLI](https://docs.railway.com/cli) **5.42.1 or newer** (tested help
   output from 5.63.4), logged in with `railway login`, and an SSH key registered
-  with Railway (`railway ssh` prompts for one the first time).
+  with Railway: `railway ssh keys add --key ~/.ssh/id_ed25519.pub`. Railway
+  publishes no host-key fingerprints for `ssh.railway.com` and rotates keys
+  across hosts, so the first connection is trust-on-first-use: accept the prompt
+  once in an interactive terminal, or add a scanned key to `known_hosts` yourself.
 - Node.js 24+ (to evaluate `.railway/railway.ts`).
 - A Tailscale tailnet where you can edit the access policy, with
   [HTTPS certificates enabled](https://tailscale.com/kb/1153/enabling-https).
@@ -31,6 +34,16 @@ railway init --name openclaw
 environments resolve private DNS to both IPv4 and IPv6, which this template
 requires; **do not reuse an environment created before 2025-10-16**
 ([why](ARCHITECTURE.md#requirements-and-limits)).
+
+**Choose the region now.** `.railway/railway.ts` places both services and both
+volumes in `us-west2` unless you set `OPENCLAW_RAILWAY_REGION` (or edit the
+`region` constant) before the first apply; region IDs are listed in
+[Railway's regions docs](https://docs.railway.com/deployments/regions). Moving
+later means migrating the volumes: `railway config apply` reports a volume
+region change but does not move the volume. Change the services' region instead
+(dashboard → service → Settings → Region), and each volume migrates with its
+service on the next deploy, with downtime proportional to its size. Then update
+the region in `railway.ts` so plans stay clean.
 
 ## 2. Create both services and their volumes
 
