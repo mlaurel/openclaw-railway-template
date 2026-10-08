@@ -20,6 +20,10 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      # Type definitions must match the Node major version CI runs (24).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       development-tools:
         patterns: ["*"]
