@@ -60,6 +60,8 @@ export default defineRailway(() => {
     env: {
       PORT: "18789",
       OPENCLAW_GATEWAY_TOKEN: preserve(),
+      // https://openclaw.<your-tailnet>.ts.net; set it in Railway before deploying.
+      OPENCLAW_PUBLIC_ORIGIN: preserve(),
       ANTHROPIC_API_KEY: preserve(),
     },
   });

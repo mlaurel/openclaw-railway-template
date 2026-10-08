@@ -19,6 +19,14 @@ gateway_token="${OPENCLAW_GATEWAY_TOKEN:-}"
 [ -n "$gateway_token" ] || fail "OPENCLAW_GATEWAY_TOKEN is not set. Generate one with 'openssl rand -hex 32' and set it as a Railway variable on this service."
 [ "${#gateway_token}" -ge 32 ] || fail "OPENCLAW_GATEWAY_TOKEN must be at least 32 characters. Generate one with 'openssl rand -hex 32'."
 
+# The baseline config reads gateway.publicOrigin from this variable; OpenClaw
+# refuses to start with an invalid origin, so fail here with a clearer message.
+case "${OPENCLAW_PUBLIC_ORIGIN:-}" in
+  https://*.ts.net | https://*.ts.net:*) ;;
+  "") fail "OPENCLAW_PUBLIC_ORIGIN is not set. Set it to the Gateway's tailnet address, for example https://openclaw.your-tailnet.ts.net" ;;
+  *) fail "OPENCLAW_PUBLIC_ORIGIN must be the Gateway's tailnet HTTPS address, for example https://openclaw.your-tailnet.ts.net (got: $OPENCLAW_PUBLIC_ORIGIN)" ;;
+esac
+
 if [ -n "${PORT:-}" ] && [ "$PORT" != "$OPENCLAW_GATEWAY_PORT" ]; then
   fail "PORT is $PORT but the Gateway listens on $OPENCLAW_GATEWAY_PORT. Set PORT=$OPENCLAW_GATEWAY_PORT so Railway's health check reaches the Gateway."
 fi

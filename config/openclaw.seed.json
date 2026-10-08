@@ -2,6 +2,7 @@
   "gateway": {
     "mode": "local",
     "bind": "lan",
+    "publicOrigin": "${OPENCLAW_PUBLIC_ORIGIN}",
     "auth": {
       "mode": "token",
       "token": {

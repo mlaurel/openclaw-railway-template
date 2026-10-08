@@ -92,5 +92,6 @@ test("no service is exposed publicly", () => {
 
 test("secrets come from Railway and are never written in the file", () => {
   assert.deepEqual(findService("openclaw").variables?.OPENCLAW_GATEWAY_TOKEN, { type: "preserve" });
+  assert.deepEqual(findService("openclaw").variables?.OPENCLAW_PUBLIC_ORIGIN, { type: "preserve" });
   assert.deepEqual(findService("tailscale").variables?.TS_AUTHKEY, { type: "preserve" });
 });

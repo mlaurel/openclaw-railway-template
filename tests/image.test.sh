@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 image="${IMAGE:-openclaw-railway:test}"
 tailscale_image="${TAILSCALE_IMAGE:-openclaw-railway-tailscale:test}"
 token="test-token-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+public_origin="https://openclaw.example-tailnet.ts.net"
 run_id="openclaw-test-$$"
 network="$run_id-network"
 gateway="$run_id-gateway"
@@ -45,7 +46,7 @@ trap cleanup EXIT INT TERM
 
 start_gateway() {
   docker run -d --name "$gateway" --network "$network" -v "$run_id-state:/data" \
-    -e PORT=18789 -e OPENCLAW_GATEWAY_TOKEN="$token" "$image" >/dev/null
+    -e PORT=18789 -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" "$image" >/dev/null
 }
 
 gateway_address() {
@@ -123,10 +124,14 @@ expect_refusal() {
 }
 expect_refusal "refuses to start without OPENCLAW_GATEWAY_TOKEN" "OPENCLAW_GATEWAY_TOKEN is not set"
 expect_refusal "refuses a short gateway token" "at least 32 characters" -e OPENCLAW_GATEWAY_TOKEN=short
+expect_refusal "refuses to start without OPENCLAW_PUBLIC_ORIGIN" "OPENCLAW_PUBLIC_ORIGIN is not set" \
+  -e OPENCLAW_GATEWAY_TOKEN="$token"
+expect_refusal "refuses an OPENCLAW_PUBLIC_ORIGIN that isn't a tailnet HTTPS address" "must be the Gateway's tailnet HTTPS address" \
+  -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN=openclaw.example-tailnet.ts.net
 expect_refusal "refuses a PORT that would point Railway's health check elsewhere" "Set PORT=18789" \
-  -e OPENCLAW_GATEWAY_TOKEN="$token" -e PORT=8080
+  -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" -e PORT=8080
 expect_refusal "refuses to start as a non-root user it cannot prepare the volume with" "must start as root" \
-  --user node -e OPENCLAW_GATEWAY_TOKEN="$token"
+  --user node -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin"
 
 log "first boot on an empty volume"
 start_gateway
@@ -156,11 +161,10 @@ audit_problems() {
       }
     });'
 }
-check "before Tailscale is configured, the only finding is the missing browser origin" \
-  '[ "$(audit_problems)" = "critical gateway.control_ui.allowed_origins_required" ]'
-gateway_cli config set gateway.publicOrigin https://openclaw.example.ts.net >/dev/null 2>&1
-check "after setting gateway.publicOrigin (deployment step 7) the audit has no warnings or critical findings" \
+check "a fresh deployment passes the security audit with no warnings or critical findings" \
   '[ -z "$(audit_problems)" ]'
+check "gateway.publicOrigin comes from OPENCLAW_PUBLIC_ORIGIN" \
+  'docker exec "$gateway" grep -F "\${OPENCLAW_PUBLIC_ORIGIN}" /data/.openclaw/openclaw.json'
 
 log "health checks"
 check "/healthz returns 200" '[ "$(remote_status /healthz)" = 200 ]'
