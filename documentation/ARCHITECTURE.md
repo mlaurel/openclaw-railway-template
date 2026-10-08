@@ -255,8 +255,9 @@ gate would fail every deploy until the channel was fixed.
   network MTU (1316 − 80 bytes of WireGuard/UDP/IPv6 overhead). Without it,
   full-size packets were lost on the way out of Railway, so TLS handshakes took
   0.6–1.7 s and transfers ran near 10 KB/s, while small requests looked fine.
-  *(Measured with the previous layout; not yet re-verified on Railway with
-  Tailscale in this container.)*
+  Re-measured on Railway with Tailscale in this container (2026-10-08, scratch
+  project): TLS handshakes ≈0.14 s and transfers 300–950 KB/s over the tailnet,
+  the same as the previous layout with the fix.
 - **Peer API.** In userspace mode `tailscaled` listens on `0.0.0.0:<random>` TCP
   for Tailscale's peer API (Taildrop and similar). It rejects anything that isn't
   an authenticated tailnet peer (`peerapi: unknown peer`); the previous separate
