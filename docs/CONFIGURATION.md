@@ -10,6 +10,7 @@ For a copyable list of the runtime variables, see [`.env.example`](../.env.examp
 | Setting | Where | Value |
 | --- | --- | --- |
 | OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0de…` — the only version pin |
+| GitHub CLI | `Dockerfile` `RUN` step | `gh` 2.102.0, checksum-verified. Needed for **Settings → Profile → GitHub connections**; OpenClaw stores each connection under `/data/.openclaw/credentials/github/`, so connections persist. |
 | Tailscale version | `tailscale/Dockerfile` `FROM` line | `tailscale/tailscale:v1.102.5@sha256:c507…` |
 | `OPENCLAW_HOME` | `Dockerfile` | `/data` → state at `/data/.openclaw` |
 | `OPENCLAW_GATEWAY_PORT` | `Dockerfile` | `8080`, the `PORT` Railway injects when a service sets none |

@@ -112,6 +112,14 @@ docs.)**
 Railway's **Rollback** button (redeploy a previous image) is only safe for
 releases that did not migrate state; read the release notes first.
 
+## GitHub CLI upgrades
+
+`gh` is downloaded in a `Dockerfile` `RUN` step, which Dependabot doesn't track.
+To upgrade, change `gh_version` and both checksums, copied from that release's
+`gh_<version>_checksums.txt` (`gh release download v<version> -R cli/cli -p 'gh_*_checksums.txt'`).
+The build fails if a checksum doesn't match, and `tests/image.test.sh` checks
+that `gh` runs.
+
 ## Tailscale upgrades
 
 Dependabot also proposes `tailscale/tailscale` tags for `tailscale/Dockerfile`.

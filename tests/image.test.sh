@@ -101,6 +101,10 @@ installed_version="$(docker run --rm --entrypoint node "$image" /app/openclaw.mj
 check "installed OpenClaw ($installed_version) matches the Dockerfile pin ($pinned_version)" \
   '[ -n "$pinned_version" ] && [ "$pinned_version" = "$installed_version" ]'
 
+log "bundled tools"
+check "the GitHub CLI is installed for GitHub connections and runs as node" \
+  'docker run --rm --user node --entrypoint gh "$image" --version | grep -E "^gh version [0-9]"'
+
 log "no secrets in the images"
 for candidate in "$image" "$tailscale_image"; do
   check "$candidate has no credentials in its environment" \

@@ -8,7 +8,7 @@ Status as of 2026-10-08. Statuses:
   evidence that exists is listed.
 - **Failed**: none.
 
-Local test suites: `sh tests/image.test.sh` (52 checks, all passing, ≈75 s),
+Local test suites: `sh tests/image.test.sh` (53 checks, all passing, ≈75 s),
 `npm run test:railway-config` (6 tests), `npm run typecheck`,
 `sh tests/serve-config.test.sh`, ShellCheck, Hadolint, and actionlint. A
 mutation run (rate limit removed from the seed, ownership repair removed from

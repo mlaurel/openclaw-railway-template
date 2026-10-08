@@ -22,6 +22,28 @@ ENV OPENCLAW_HOME=/data \
     OPENCLAW_SUPERVISOR_MODE=external \
     OPENCLAW_NO_AUTO_UPDATE=1
 
+# GitHub CLI, which OpenClaw drives for Settings > Profile > GitHub connections
+# (device sign-in). OpenClaw keeps each connection's credentials under the state
+# directory, so they persist on the volume. Pinned release, verified against the
+# checksums GitHub publishes with it; shell variables, not ARGs, so no Railway
+# variable can reach the build.
+RUN set -eu; \
+    gh_version=2.102.0; \
+    architecture="$(dpkg --print-architecture)"; \
+    case "$architecture" in \
+      amd64) checksum=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386 ;; \
+      arm64) checksum=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484 ;; \
+      *) echo "no GitHub CLI checksum for $architecture" >&2; exit 1 ;; \
+    esac; \
+    archive="/tmp/gh_${gh_version}_linux_${architecture}.tar.gz"; \
+    curl -fsSL -o "$archive" "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_${architecture}.tar.gz"; \
+    printf '%s  %s\n' "$checksum" "$archive" > /tmp/gh.sha256; \
+    sha256sum -c /tmp/gh.sha256; \
+    tar -xzf "$archive" -C /tmp; \
+    install -m 0755 "/tmp/gh_${gh_version}_linux_${architecture}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh*; \
+    gh --version
+
 COPY config/openclaw.seed.json /etc/openclaw-railway/openclaw.seed.json
 COPY scripts/entrypoint.sh /usr/local/bin/openclaw-railway-entrypoint
 # Shadows /usr/local/bin/openclaw on PATH so a root `railway ssh` shell runs the
