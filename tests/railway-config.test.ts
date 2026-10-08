@@ -54,17 +54,17 @@ test("openclaw runs one volume-backed, health-checked Gateway", () => {
   assert.equal(openclaw.deploy?.requiredMountPath, "/data");
   assert.equal(openclaw.deploy?.healthcheckPath, "/startupz");
   assert.equal(openclaw.deploy?.restartPolicyType, "ALWAYS");
-  assert.deepEqual(openclaw.variables?.PORT, { type: "literal", value: "18789" });
+  assert.equal(openclaw.variables?.PORT, undefined, "no PORT: Railway's default 8080 is the Gateway port");
   assert.deepEqual(mountPaths(openclaw), ["/data"]);
 });
 
 test("tailscale keeps its node identity on a volume", () => {
   const tailscale = findService("tailscale");
-  assert.equal(tailscale.build?.dockerfilePath, "tailscale/Dockerfile");
+  assert.equal((tailscale.source as { rootDirectory?: string } | undefined)?.rootDirectory, "tailscale");
   assert.equal(instanceCount(tailscale), 1);
   assert.equal(tailscale.deploy?.requiredMountPath, "/var/lib/tailscale");
   assert.equal(tailscale.deploy?.healthcheckPath, "/healthz");
-  assert.deepEqual(tailscale.variables?.PORT, { type: "literal", value: "9002" });
+  assert.equal(tailscale.variables?.PORT, undefined, "no PORT: Railway's default 8080 is the health port");
   assert.deepEqual(mountPaths(tailscale), ["/var/lib/tailscale"]);
 });
 

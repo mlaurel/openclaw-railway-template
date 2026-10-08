@@ -57,8 +57,8 @@ export default defineRailway(() => {
       drainingSeconds: 330,
     },
     volumeMounts: { "/data": openclawState },
+    // No PORT variable: Railway then injects PORT=8080, which the Gateway uses.
     env: {
-      PORT: "18789",
       OPENCLAW_GATEWAY_TOKEN: preserve(),
       // https://openclaw.<your-tailnet>.ts.net; set it in Railway before deploying.
       OPENCLAW_PUBLIC_ORIGIN: preserve(),
@@ -67,11 +67,10 @@ export default defineRailway(() => {
   });
 
   const tailscale = service("tailscale", {
-    source: github(sourceRepository, { branch: sourceBranch }),
+    source: github(sourceRepository, { branch: sourceBranch, rootDirectory: "tailscale" }),
     build: {
       builder: "DOCKERFILE",
-      dockerfilePath: "tailscale/Dockerfile",
-      watchPatterns: ["tailscale/**"],
+      watchPatterns: ["/tailscale/**"],
     },
     replicas: { [region]: 1 },
     deploy: {
@@ -83,7 +82,6 @@ export default defineRailway(() => {
     },
     volumeMounts: { "/var/lib/tailscale": tailscaleState },
     env: {
-      PORT: "9002",
       TS_AUTHKEY: preserve(),
     },
   });

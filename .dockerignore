@@ -3,4 +3,3 @@
 !config/openclaw.seed.json
 !scripts/entrypoint.sh
 !scripts/openclaw-as-node.sh
-!tailscale/serve.json

@@ -18,7 +18,7 @@ import (
 	"tailscale.com/ipn"
 )
 
-const gatewayAddress = "openclaw.railway.internal:18789"
+const gatewayAddress = "openclaw.railway.internal:8080"
 
 func main() {
 	if err := check(os.Args[1]); err != nil {

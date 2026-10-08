@@ -11,12 +11,14 @@ FROM ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0ded1dd76939b2bf4d67ef2d13247b8b
 # hadolint ignore=DL3002,DL3066
 USER root
 
+# The Gateway listens on 8080, the PORT Railway injects when a service sets
+# none, so Railway's health check reaches it with no PORT variable.
 # OPENCLAW_HOME relocates every OpenClaw path default (state, config, agents,
 # credentials, workspace) under the Railway volume: /data/.openclaw.
 # OPENCLAW_SUPERVISOR_MODE=external tells OpenClaw that Railway owns the process
 # lifecycle, which refuses in-place self-updates and service installs.
 ENV OPENCLAW_HOME=/data \
-    OPENCLAW_GATEWAY_PORT=18789 \
+    OPENCLAW_GATEWAY_PORT=8080 \
     OPENCLAW_SUPERVISOR_MODE=external \
     OPENCLAW_NO_AUTO_UPDATE=1
 
@@ -35,7 +37,7 @@ RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD ["node", "-e", "fetch(`http://127.0.0.1:${process.env.OPENCLAW_GATEWAY_PORT}/healthz`).then((response) => process.exit(response.ok ? 0 : 1), () => process.exit(1))"]
 
-EXPOSE 18789
+EXPOSE 8080
 
 # After the entrypoint drops privileges, this is the stock image's own startup:
 # tini (PID 1) -> docker-entrypoint.mjs (runs Doctor migrations) -> Gateway.

@@ -46,7 +46,7 @@ trap cleanup EXIT INT TERM
 
 start_gateway() {
   docker run -d --name "$gateway" --network "$network" -v "$run_id-state:/data" \
-    -e PORT=18789 -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" "$image" >/dev/null
+    -e PORT=8080 -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" "$image" >/dev/null
 }
 
 gateway_address() {
@@ -62,7 +62,7 @@ remote_status() {
     const [url, ...pairs] = process.argv.slice(1);
     const headers = Object.fromEntries(pairs.map((pair) => pair.split(/=(.*)/s).slice(0, 2)));
     fetch(url, { headers }).then((response) => console.log(response.status), () => console.log("unreachable"));
-  ' "http://$(gateway_address):18789$path" "$@"
+  ' "http://$(gateway_address):8080$path" "$@"
 }
 
 wait_for_startup() {
@@ -89,7 +89,7 @@ root_owned_state() {
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
   log "build"
   docker build -q -t "$image" . >/dev/null
-  docker build -q -t "$tailscale_image" -f tailscale/Dockerfile . >/dev/null
+  docker build -q -t "$tailscale_image" tailscale >/dev/null
   pass "both images build"
 fi
 
@@ -128,8 +128,8 @@ expect_refusal "refuses to start without OPENCLAW_PUBLIC_ORIGIN" "OPENCLAW_PUBLI
   -e OPENCLAW_GATEWAY_TOKEN="$token"
 expect_refusal "refuses an OPENCLAW_PUBLIC_ORIGIN that isn't a tailnet HTTPS address" "must be the Gateway's tailnet HTTPS address" \
   -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN=openclaw.example-tailnet.ts.net
-expect_refusal "refuses a PORT that would point Railway's health check elsewhere" "Set PORT=18789" \
-  -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" -e PORT=8080
+expect_refusal "refuses a PORT that would point Railway's health check elsewhere" "Delete the PORT variable" \
+  -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" -e PORT=18789
 expect_refusal "refuses to start as a non-root user it cannot prepare the volume with" "must start as root" \
   --user node -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin"
 
@@ -187,7 +187,7 @@ check "spoofed Tailscale identity headers are rejected (403)" \
 log "device pairing from a remote node"
 docker run -d --name "$node_host" --network "$network" -v "$run_id-node-state:/home/node/.openclaw" \
   -e OPENCLAW_GATEWAY_TOKEN="$token" --entrypoint node "$image" \
-  /app/openclaw.mjs node run --host "$(gateway_address)" --port 18789 --no-tls --display-name pairing-test >/dev/null
+  /app/openclaw.mjs node run --host "$(gateway_address)" --port 8080 --no-tls --display-name pairing-test >/dev/null
 pending_request_id() {
   gateway_cli devices list --json 2>/dev/null | docker run --rm -i --entrypoint node "$image" -e '
     let input = "";
@@ -255,7 +255,7 @@ sleep 10
 check "containerboot runs without NET_ADMIN or a TUN device" \
   '[ "$(docker inspect -f "{{.State.Running}}" "$tailscale")" = true ]'
 check "/healthz is unhealthy until the node joins a tailnet" \
-  '! docker exec "$tailscale" wget -qO- http://127.0.0.1:9002/healthz'
+  '! docker exec "$tailscale" wget -qO- http://127.0.0.1:8080/healthz'
 
 printf '\n'
 if [ "$failures" -gt 0 ]; then

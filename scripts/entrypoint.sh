@@ -28,7 +28,7 @@ case "${OPENCLAW_PUBLIC_ORIGIN:-}" in
 esac
 
 if [ -n "${PORT:-}" ] && [ "$PORT" != "$OPENCLAW_GATEWAY_PORT" ]; then
-  fail "PORT is $PORT but the Gateway listens on $OPENCLAW_GATEWAY_PORT. Set PORT=$OPENCLAW_GATEWAY_PORT so Railway's health check reaches the Gateway."
+  fail "PORT is $PORT but the Gateway listens on $OPENCLAW_GATEWAY_PORT, so Railway's health check would miss it. Delete the PORT variable (Railway then uses $OPENCLAW_GATEWAY_PORT) or set it to $OPENCLAW_GATEWAY_PORT."
 fi
 
 state_directory="$OPENCLAW_HOME/.openclaw"
