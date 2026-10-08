@@ -47,7 +47,10 @@ check() {
 }
 
 cleanup() {
+  # Log the live machines out so they leave the tailnet now, not when the
+  # ephemeral-node timeout removes them.
   docker exec "$live" as-node tailscale logout >/dev/null 2>&1 || true
+  docker exec "$live_twin" as-node tailscale logout >/dev/null 2>&1 || true
   docker rm -f "$gateway" "$watchdog" "$live" "$live_twin" >/dev/null 2>&1 || true
   docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-live-state" "$run_id-live-twin-state" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
@@ -463,6 +466,7 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     '[ "$twin_machine" != "$live_hostname" ] && [ -n "$twin_machine" ] && docker logs "$live_twin" 2>&1 | grep -F "logged in to Tailscale as $twin_machine (asked for $twin_requested)" && ! docker logs "$live_twin" 2>&1 | grep -F "already taken"'
   check "the suffixed machine logs its own address and serves there" \
     'docker logs "$live_twin" 2>&1 | grep -F "the Gateway will be at https://$twin_name/" && docker logs "$live_twin" 2>&1 | grep -F "serve enabled: https://$twin_name/"'
+  docker exec "$live_twin" as-node tailscale logout >/dev/null 2>&1 || true
   docker rm -f "$live_twin" >/dev/null 2>&1 || true
   docker restart "$live" >/dev/null
   attempt=0
