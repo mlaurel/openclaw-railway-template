@@ -70,6 +70,9 @@ export default defineRailway(() => {
     source: github(sourceRepository, { branch: sourceBranch, rootDirectory: "tailscale" }),
     build: {
       builder: "DOCKERFILE",
+      // Railway keeps this repository-relative path once set, and a plan that
+      // clears it never converges, so it is declared explicitly.
+      dockerfilePath: "tailscale/Dockerfile",
       watchPatterns: ["/tailscale/**"],
     },
     replicas: { [region]: 1 },
