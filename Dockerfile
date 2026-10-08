@@ -126,6 +126,7 @@ USER root
 RUN mv /home/linuxbrew/.linuxbrew /opt/homebrew-seed \
  && ln -s /data/linuxbrew /home/linuxbrew/.linuxbrew
 
+# Keep this patch in .dockerignore's build-context allowlist.
 COPY scripts/patch-machine-display-name.mjs /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
 RUN node /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
 
