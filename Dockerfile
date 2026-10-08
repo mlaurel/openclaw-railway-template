@@ -20,7 +20,8 @@ USER root
 ENV OPENCLAW_HOME=/data \
     OPENCLAW_GATEWAY_PORT=8080 \
     OPENCLAW_SUPERVISOR_MODE=external \
-    OPENCLAW_NO_AUTO_UPDATE=1
+    OPENCLAW_NO_AUTO_UPDATE=1 \
+    OPENCLAW_MACHINE_DISPLAY_NAME=Gowanus
 
 # GitHub CLI, which OpenClaw drives for Settings > Profile > GitHub connections
 # (device sign-in). OpenClaw keeps each connection's credentials under the state
@@ -124,6 +125,9 @@ RUN git clone --depth 1 --branch 7.0.8 https://github.com/Homebrew/brew /home/li
 USER root
 RUN mv /home/linuxbrew/.linuxbrew /opt/homebrew-seed \
  && ln -s /data/linuxbrew /home/linuxbrew/.linuxbrew
+
+COPY scripts/patch-machine-display-name.mjs /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
+RUN node /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
 
 COPY config/openclaw.seed.json /etc/openclaw-railway/openclaw.seed.json
 COPY scripts/entrypoint.sh /usr/local/bin/openclaw-railway-entrypoint
