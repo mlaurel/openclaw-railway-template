@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Type-check Railway configuration
+        run: npm run typecheck
+      - name: Evaluate Railway configuration
+        run: npm run test:railway-config
+      - name: Validate JSON configuration
+        run: |
+          jq empty config/openclaw.seed.json
+          jq empty tailscale/serve.json
+      - name: Check Tailscale Serve config against the pinned Tailscale types
+        run: sh tests/serve-config.test.sh
+      - name: ShellCheck
+        run: |
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 \
+            scripts/entrypoint.sh scripts/openclaw-as-node.sh tests/image.test.sh tests/serve-config.test.sh
+      - name: Hadolint
+        run: |
+          docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
+          docker run --rm -i hadolint/hadolint:v2.15.1 < tailscale/Dockerfile
+
+  images:
+    name: Build and test images
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build, start, and exercise both images
+        run: sh tests/image.test.sh

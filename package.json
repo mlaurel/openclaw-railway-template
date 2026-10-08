@@ -1,0 +1,19 @@
+{
+  "name": "openclaw-railway-template",
+  "private": true,
+  "description": "Railway Infrastructure as Code and tests for the OpenClaw Railway template.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json",
+    "test:railway-config": "node --test tests/railway-config.test.ts",
+    "test:image": "sh tests/image.test.sh"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "railway": "3.13.0",
+    "typescript": "7.0.2"
+  }
+}

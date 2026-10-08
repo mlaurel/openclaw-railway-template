@@ -1,0 +1,97 @@
+# Configuration
+
+Where each setting lives, and why. Nothing here is a secret except where noted.
+Secrets go in Railway variables (sealed), never in this repository.
+
+For a copyable list of the runtime variables, see [`.env.example`](../.env.example).
+
+## Build time (baked into the images)
+
+| Setting | Where | Value |
+| --- | --- | --- |
+| OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0de…` — the only version pin |
+| Tailscale version | `tailscale/Dockerfile` `FROM` line | `tailscale/tailscale:v1.102.5@sha256:c507…` |
+| `OPENCLAW_HOME` | `Dockerfile` | `/data` → state at `/data/.openclaw` |
+| `OPENCLAW_GATEWAY_PORT` | `Dockerfile` | `18789` |
+| `OPENCLAW_SUPERVISOR_MODE` | `Dockerfile` | `external` — Railway owns the process lifecycle; OpenClaw refuses self-update and service installs, and restarts by exiting cleanly |
+| `OPENCLAW_NO_AUTO_UPDATE` | `Dockerfile` | `1` |
+| Gateway bind and auth mode | `Dockerfile` `CMD` | `gateway --bind lan --auth token` (pinned so no config edit can undo them) |
+| Baseline OpenClaw config | `config/openclaw.seed.json` | Copied to `/data/.openclaw/openclaw.json` on first boot only |
+| Tailscale defaults | `tailscale/Dockerfile` | `TS_USERSPACE=true`, `TS_STATE_DIR=/var/lib/tailscale`, `TS_AUTH_ONCE=true`, `TS_SERVE_CONFIG=/etc/tailscale/serve.json`, `TS_HOSTNAME=openclaw`, `TS_ENABLE_HEALTH_CHECK=true`, `TS_LOCAL_ADDR_PORT=[::]:9002` |
+| Tailscale Serve routes | `tailscale/serve.json` | `:443` (TLS terminated) and `:18789` → `openclaw.railway.internal:18789`, raw TCP |
+
+The Dockerfiles declare no `ARG`s. Railway passes service variables to builds
+only as matching build arguments, so no variable can reach an image layer
+(`tests/image.test.sh` checks this).
+
+## Railway variables: `openclaw` service
+
+| Variable | Required | Secret | Purpose |
+| --- | --- | --- | --- |
+| `PORT` | yes | no | `18789`. Railway health-checks `$PORT`; the entrypoint refuses to start if it differs from the Gateway port. |
+| `OPENCLAW_GATEWAY_TOKEN` | yes | **yes** | Gateway authentication secret, ≥ 32 characters. Generate with `openssl rand -hex 32`. |
+| Provider key, e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | for the provider you choose | **yes** | Model credential. Onboarding stores an env reference to it, not the value. |
+| `TELEGRAM_BOT_TOKEN` | for Telegram | **yes** | Bot token from @BotFather. Its presence enables Telegram (DM pairing, allowlisted groups). |
+
+## Railway variables: `tailscale` service
+
+| Variable | Required | Secret | Purpose |
+| --- | --- | --- | --- |
+| `PORT` | yes | no | `9002`, containerboot's health endpoint. |
+| `TS_AUTHKEY` | no | **yes** | One-off, tagged, pre-approved auth key, used only for the first login. Omit it to log in once through the URL printed in the deploy logs. See [TAILSCALE.md](TAILSCALE.md). |
+| `TS_HOSTNAME` | no | no | Overrides the MagicDNS name (default `openclaw`). |
+
+Every variable on a service managed by `.railway/railway.ts` must also appear in
+that file — secrets as `preserve()` — or `railway config plan` will propose
+deleting it. See [DEPLOYMENT.md](DEPLOYMENT.md#keeping-variables-in-sync).
+
+## How environment variables and `openclaw.json` interact
+
+- OpenClaw reads `/data/.openclaw/openclaw.json`. Not every setting has an
+  environment variable; use the config file (`openclaw config set …`) for
+  everything not listed above.
+- Process environment wins over `$OPENCLAW_STATE_DIR/.env` and the config `env`
+  block. Railway variables are process environment.
+- The baseline config refers to the Gateway token as an env SecretRef
+  (`{ "source": "env", "provider": "default", "id": "OPENCLAW_GATEWAY_TOKEN" }`).
+  If the variable is missing, auth fails closed; there is no fallback.
+- Onboarding with `--secret-input-mode ref` stores provider keys the same way.
+  Verified for this template: after onboarding with `ANTHROPIC_API_KEY` and
+  adding Telegram with `--use-env`, neither secret value appears anywhere under
+  `/data/.openclaw`.
+- Command-line flags beat config: the `CMD` pins `--bind lan --auth token`, so
+  onboarding or a config edit cannot make the Gateway loopback-only (which would
+  break Railway's health check and Tailscale) or unauthenticated.
+
+## What lives on the volume
+
+`OPENCLAW_HOME=/data` relocates every OpenClaw path default, so all durable state
+is under `/data/.openclaw` (observed layout after onboarding):
+
+```text
+/data/.openclaw/
+├── openclaw.json (+ .bak, .last-good)  Gateway, channel, agent, and tool config
+├── state/openclaw.sqlite               shared state: device pairing, secrets store, provider auth
+├── agents/<agentId>/                   per-agent SQLite (sessions, auth profiles), agent identity
+├── workspace/                          default agent workspace: memory files, AGENTS.md, SOUL.md, …
+├── plugin-skills/, media/, cache/      installed skills, media, caches
+└── tmp/, migration/                    OpenClaw-managed working files
+```
+
+OAuth tokens (for OAuth-based providers) are stored in SQLite on this volume in
+plaintext. Treat the volume and its backups as credentials.
+
+Not persisted, by design: the container's home directory (`/home/node`) and
+`/tmp`. Checked after onboarding: OpenClaw writes nothing there except empty
+caches and its rolling file log (`/tmp/openclaw/openclaw-<date>.log`; the same
+output goes to stdout and Railway's logs). Tools you install into `/home/node`
+at runtime, for example the Claude Code CLI, disappear on redeploy; bake them
+into the image instead.
+
+## Don't set a Start Command
+
+Leave Railway's **Start Command** empty. The image's `CMD` is the stock
+foreground Gateway invocation, which OpenClaw's entrypoint recognizes and runs
+Doctor migrations before. A different command (even `openclaw gateway`, which
+resolves to the CLI wrapper) skips Doctor. The one sanctioned override is
+`sleep infinity` for [maintenance](TROUBLESHOOTING.md#exit-code-78).

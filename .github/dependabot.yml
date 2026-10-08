@@ -1,0 +1,30 @@
+# Dependabot opens pull requests; it never merges or deploys them. Merging an
+# OpenClaw upgrade is a deploy, so follow docs/UPGRADING.md before merging.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "openclaw"
+
+  - package-ecosystem: docker
+    directory: /tailscale
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "tailscale"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      development-tools:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
