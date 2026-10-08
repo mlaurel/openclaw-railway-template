@@ -4,3 +4,6 @@
 !config/openclaw.seed.json
 !scripts/entrypoint.sh
 !scripts/openclaw-as-node.sh
+!scripts/as-node.sh
+!tools/package.json
+!tools/package-lock.json

@@ -10,6 +10,8 @@ For a copyable list of the runtime variables, see [`.env.example`](../.env.examp
 | Setting | Where | Value |
 | --- | --- | --- |
 | OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0de…` — the only version pin |
+| `HOME` | `Dockerfile` | `/data/home`, on the volume, so tool logins and settings under `~` persist. See [TOOLS.md](TOOLS.md). |
+| Skill tools | `Dockerfile`, `tools/package.json` | `gog`, `claude`, `codex`, `jq`, `tmux`; see [TOOLS.md](TOOLS.md). |
 | GitHub CLI | `Dockerfile` `RUN` step | `gh` 2.102.0, checksum-verified. Needed for **Settings → Profile → GitHub connections**; OpenClaw stores each connection under `/data/.openclaw/credentials/github/`, so connections persist. |
 | Tailscale version | `tailscale/Dockerfile` `FROM` line | `tailscale/tailscale:v1.102.5@sha256:c507…` |
 | `OPENCLAW_HOME` | `Dockerfile` | `/data` → state at `/data/.openclaw` |
@@ -37,6 +39,7 @@ and containerboot's health endpoint). The entrypoint refuses to start if a
 | `OPENCLAW_PUBLIC_ORIGIN` | yes | no | `https://openclaw.<your-tailnet>.ts.net`. The baseline config sets `gateway.publicOrigin` from it, which is also the browser-origin allowlist. The entrypoint refuses to start if it is missing or not a `https://….ts.net` address. |
 | `OPENCLAW_GATEWAY_TOKEN` | yes | **yes** | Gateway authentication secret, ≥ 32 characters. Generate with `openssl rand -hex 32`. |
 | Provider key, e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | for the provider you choose | **yes** | Model credential. Onboarding stores an env reference to it, not the value. |
+| `GOG_KEYRING_PASSWORD` | for the gog skill | **yes** | Password for `gog`'s token file on the volume. See [TOOLS.md](TOOLS.md#google-gog). |
 | `TELEGRAM_BOT_TOKEN` | for Telegram | **yes** | Bot token from @BotFather. Its presence enables Telegram (DM pairing, allowlisted groups). |
 
 ## Railway variables: `tailscale` service
@@ -86,12 +89,10 @@ is under `/data/.openclaw` (observed layout after onboarding):
 OAuth tokens (for OAuth-based providers) are stored in SQLite on this volume in
 plaintext. Treat the volume and its backups as credentials.
 
-Not persisted, by design: the container's home directory (`/home/node`) and
-`/tmp`. Checked after onboarding: OpenClaw writes nothing there except empty
-caches and its rolling file log (`/tmp/openclaw/openclaw-<date>.log`; the same
-output goes to stdout and Railway's logs). Tools you install into `/home/node`
-at runtime, for example the Claude Code CLI, disappear on redeploy; bake them
-into the image instead.
+`HOME` is `/data/home`, also on the volume, so command-line tools keep their
+logins and settings across redeploys. Not persisted: `/tmp`, including
+OpenClaw's rolling file log (`/tmp/openclaw/openclaw-<date>.log`; the same
+output goes to stdout and Railway's logs).
 
 ## Don't set a Start Command
 

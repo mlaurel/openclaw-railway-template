@@ -104,6 +104,9 @@ check "installed OpenClaw ($installed_version) matches the Dockerfile pin ($pinn
 log "bundled tools"
 check "the GitHub CLI is installed for GitHub connections and runs as node" \
   'docker run --rm --user node --entrypoint gh "$image" --version | grep -E "^gh version [0-9]"'
+for tool_check in "gog --version" "jq --version" "tmux -V" "codex --version" "claude --version"; do
+  check "$tool_check runs as node" 'docker run --rm --user node --entrypoint sh "$image" -c "$tool_check"'
+done
 
 log "no secrets in the images"
 for candidate in "$image" "$tailscale_image"; do
@@ -215,9 +218,14 @@ done
 check "the approved node connects" 'docker logs "$node_host" 2>&1 | grep -F "node host gateway connected"'
 
 log "state survives a restart"
+# /proc/1/environ belongs to node, so read it as node.
+check "HOME is on the volume for the Gateway" \
+  'docker exec "$gateway" as-node sh -c "tr \"\\0\" \"\\n\" < /proc/1/environ" | grep -x HOME=/data/home'
+check "HOME is on the volume in a root shell too" '[ "$(docker exec "$gateway" sh -c "echo \$HOME")" = /data/home ]'
+docker exec "$gateway" as-node sh -c 'echo kept > "$HOME/persist-check"'
 gateway_cli config set gateway.controlUi.communityInvite false >/dev/null 2>&1
 check "a config change made from a root shell leaves no root-owned files" '[ -z "$(root_owned_state)" ]'
-docker exec "$gateway" touch /data/.openclaw/written-by-root
+docker exec "$gateway" touch /data/.openclaw/written-by-root /data/home/written-by-root
 start_time="$(date +%s)"
 docker stop -t 60 "$gateway" >/dev/null
 stop_seconds=$(($(date +%s) - start_time))
@@ -231,7 +239,9 @@ check "the baseline config was not reapplied" \
 check "OpenClaw did not detect a clobbered config" \
   '! docker exec "$gateway" sh -c "ls /data/.openclaw | grep clobbered"'
 check "root-owned files are handed back to node on restart" \
-  '[ "$(docker exec "$gateway" stat -c %U /data/.openclaw/written-by-root)" = node ]'
+  '[ "$(docker exec "$gateway" stat -c %U /data/.openclaw/written-by-root)" = node ] && [ "$(docker exec "$gateway" stat -c %U /data/home/written-by-root)" = node ]'
+check "files in HOME survive a restart" \
+  '[ "$(docker exec "$gateway" cat /data/home/persist-check)" = kept ]'
 check "the paired node is still paired after the restart" \
   'gateway_cli devices list --json | grep -F pairing-test'
 

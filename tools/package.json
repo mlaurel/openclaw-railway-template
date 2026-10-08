@@ -1,0 +1,11 @@
+{
+  "name": "openclaw-railway-tools",
+  "private": true,
+  "description": "Command-line tools baked into the OpenClaw image for bundled skills. Dependabot proposes updates; each one is a reviewed rebuild.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.285"
+  },
+  "allowScripts": {
+    "@anthropic-ai/claude-code": true
+  }
+}

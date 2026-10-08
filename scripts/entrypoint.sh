@@ -38,16 +38,15 @@ if ! mountpoint -q "$OPENCLAW_HOME"; then
   printf 'openclaw-railway: warning: %s is not a mounted volume; all OpenClaw state will be lost when this container is replaced.\n' "$OPENCLAW_HOME" >&2
 fi
 
-install -d -o node -g node -m 700 "$state_directory"
+install -d -o node -g node -m 700 "$state_directory" "$HOME"
 chown node:node "$OPENCLAW_HOME"
-# A root shell (for example `railway ssh` without the openclaw wrapper) can
-# leave root-owned files behind, which locks the Gateway out of its own state.
-find "$state_directory" -xdev ! -user node -exec chown -h node:node {} +
+# A root shell (for example `railway ssh` without the wrappers) can leave
+# root-owned files behind, which locks the Gateway and its tools out of them.
+find "$state_directory" "$HOME" -xdev ! -user node -exec chown -h node:node {} +
 
 if [ ! -e "$config_file" ] && [ ! -L "$config_file" ]; then
   install -o node -g node -m 600 /etc/openclaw-railway/openclaw.seed.json "$config_file"
   echo "openclaw-railway: created $config_file from the baseline config"
 fi
 
-export HOME=/home/node
 exec setpriv --reuid=node --regid=node --init-groups -- "$@"

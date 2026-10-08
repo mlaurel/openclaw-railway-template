@@ -44,15 +44,76 @@ RUN set -eu; \
     rm -rf /tmp/gh*; \
     gh --version
 
+# jq and tmux for the trello and tmux skills, from Debian stable. Not pinned to
+# exact versions: a Debian security update removes the previous version from the
+# mirror, so an exact pin would eventually break every build.
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends jq tmux \
+ && rm -rf /var/lib/apt/lists/* \
+ && jq --version \
+ && tmux -V
+
+# gog, the Google Workspace CLI for the gog skill. Pinned release, verified
+# against the project's published checksums.
+RUN set -eu; \
+    gog_version=0.43.0; \
+    architecture="$(dpkg --print-architecture)"; \
+    case "$architecture" in \
+      amd64) checksum=a16d4b8b917e36b96b09b30ecb7a5049d06ff1e88b856a101eec12b86b33fe05 ;; \
+      arm64) checksum=f66e3c9ab7664b7633d57d2d5303e0db75deb4045e1b32c3493c0d8ba68a70f7 ;; \
+      *) echo "no gog checksum for $architecture" >&2; exit 1 ;; \
+    esac; \
+    archive="/tmp/gogcli_${gog_version}_linux_${architecture}.tar.gz"; \
+    curl -fsSL -o "$archive" "https://github.com/steipete/gogcli/releases/download/v${gog_version}/gogcli_${gog_version}_linux_${architecture}.tar.gz"; \
+    printf '%s  %s\n' "$checksum" "$archive" > /tmp/gog.sha256; \
+    sha256sum -c /tmp/gog.sha256; \
+    mkdir /tmp/gogcli; \
+    tar -xzf "$archive" -C /tmp/gogcli; \
+    install -m 0755 /tmp/gogcli/gog /usr/local/bin/gog; \
+    rm -rf /tmp/gogcli /tmp/gog.sha256 "$archive"; \
+    gog --version
+
+# Codex CLI for the coding-agent skill. The base image already ships
+# @openai/codex for OpenClaw's Codex runtime, so link that copy onto PATH; it
+# follows OpenClaw's own pin on every upgrade. (`set --` word-splits the find
+# result on purpose, to check there is exactly one match.)
+# hadolint ignore=SC2086
+RUN set -eu; \
+    codex_script="$(find /app/node_modules/.pnpm -path '*/@openai+codex@*/node_modules/@openai/codex/bin/codex.js' -print)"; \
+    set -- $codex_script; \
+    [ "$#" = 1 ] || { echo "expected exactly one bundled Codex CLI, found: $codex_script" >&2; exit 1; }; \
+    ln -s "$codex_script" /usr/local/bin/codex; \
+    codex --version
+
+# Claude Code for the coding-agent skill, pinned in tools/package-lock.json
+# (Dependabot proposes updates). Its postinstall script copies the native binary
+# for this architecture into place; tools/package.json approves only that
+# package's install script (npm 12 blocks dependency scripts by default).
+COPY tools/package.json tools/package-lock.json /opt/tools/
+RUN npm ci --prefix /opt/tools --omit=dev --no-audit --no-fund \
+ && ln -s /opt/tools/node_modules/.bin/claude /usr/local/bin/claude \
+ && claude --version
+
 COPY config/openclaw.seed.json /etc/openclaw-railway/openclaw.seed.json
 COPY scripts/entrypoint.sh /usr/local/bin/openclaw-railway-entrypoint
-# Shadows /usr/local/bin/openclaw on PATH so a root `railway ssh` shell runs the
-# CLI as `node` and cannot leave root-owned files in the state directory.
+# `railway ssh` opens a root shell. `as-node <command>` runs a command as the
+# Gateway's user, so tool logins (for example `as-node gog auth add …`) don't
+# leave root-owned files the agent can't read. The openclaw wrapper shadows
+# /usr/local/bin/openclaw on PATH and does the same automatically.
+COPY scripts/as-node.sh /usr/local/bin/as-node
 COPY scripts/openclaw-as-node.sh /usr/local/sbin/openclaw
 
 RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json \
- && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/sbin/openclaw \
+ && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/bin/as-node /usr/local/sbin/openclaw \
  && node /app/openclaw.mjs --version
+
+# HOME is on the volume, so tool logins and settings kept under ~ (gog's Google
+# tokens, Claude Code and Codex sessions, anything installed to ~/.local) survive
+# redeploys. DISABLE_AUTOUPDATER keeps Claude Code at the pinned version.
+ENV HOME=/data/home \
+    PATH=/data/home/.local/bin:$PATH \
+    DISABLE_AUTOUPDATER=1
 
 # Replaces the base image's HEALTHCHECK, which would run OpenClaw code as root.
 # Railway ignores Docker health checks; this one is for local `docker run`.

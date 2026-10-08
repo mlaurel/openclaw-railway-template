@@ -63,6 +63,8 @@ export default defineRailway(() => {
       // https://openclaw.<your-tailnet>.ts.net; set it in Railway before deploying.
       OPENCLAW_PUBLIC_ORIGIN: preserve(),
       ANTHROPIC_API_KEY: preserve(),
+      // Password for gog's token file; see docs/TOOLS.md.
+      GOG_KEYRING_PASSWORD: preserve(),
     },
   });
 

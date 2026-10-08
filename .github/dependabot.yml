@@ -28,6 +28,13 @@ updates:
       development-tools:
         patterns: ["*"]
 
+  - package-ecosystem: npm
+    directory: /tools
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "tools"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

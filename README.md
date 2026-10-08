@@ -38,6 +38,7 @@ Railway Infrastructure as Code (`.railway/railway.ts`).
 | [QUICKSTART.md](docs/QUICKSTART.md) | Template deploy to a paired Mac app in about 15 minutes |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design, access options compared, why proxy attribution can't fail, what Railway owns |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Step-by-step deployment and onboarding; publishing as a Railway template |
+| [TOOLS.md](docs/TOOLS.md) | CLI tools for skills (`gh`, `gog`, Claude Code, Codex), logging them in, adding more |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Every variable and setting, build-time vs runtime, what lives on the volume |
 | [TAILSCALE.md](docs/TAILSCALE.md) | Access policy, auth keys, tags, key expiry, rotation |
 | [DESKTOP.md](docs/DESKTOP.md) | Connecting and pairing the macOS app |
@@ -51,7 +52,9 @@ Railway Infrastructure as Code (`.railway/railway.ts`).
 ```text
 Dockerfile                     OpenClaw image: official base + entrypoint + seed config
 scripts/entrypoint.sh          Volume preparation, environment checks, privilege drop
-scripts/openclaw-as-node.sh    Runs the CLI as `node` from root `railway ssh` shells
+scripts/as-node.sh             `as-node <command>`: run a tool as `node` from a root `railway ssh` shell
+scripts/openclaw-as-node.sh    Runs the OpenClaw CLI through as-node
+tools/                         Pinned npm tools for skills (Claude Code)
 config/openclaw.seed.json      Baseline config, written on first boot only
 tailscale/Dockerfile           Official Tailscale image + Serve config
 tailscale/serve.json           Raw TCP forwards to openclaw.railway.internal:8080
