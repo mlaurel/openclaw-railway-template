@@ -58,7 +58,7 @@ used unchanged. The Tailscale container joined a real tailnet with an auth key
 | 20 | CI validates the deployment configuration | Verified locally / first CI run pending | Every step in `.github/workflows/ci.yml` ran locally and passed; actionlint clean. Not yet run on GitHub (no remote repository yet). |
 | 21 | Backup and rollback procedures are documented | Verified (docs) / restore live pending | [UPGRADING.md](UPGRADING.md). `openclaw backup create --verify` tested against a running Gateway. Railway backup restore not exercised. |
 | 22 | The repository can be deployed from GitHub to Railway | Live validation required | `.railway/railway.ts` type-checks and evaluates with `railway@3.13.0`; `railway config plan` against a real project not run. |
-| 23 | Suitable for a reusable public Railway template | Live validation required; one owner decision | Template composition documented ([DEPLOYMENT.md](DEPLOYMENT.md#publishing-as-a-railway-template)). No LICENSE yet: choosing one is the owner's decision. |
+| 23 | Suitable for a reusable public Railway template | Live validation required | Template composition documented ([DEPLOYMENT.md](DEPLOYMENT.md#publishing-as-a-railway-template)). MIT licensed (`LICENSE`); public repository. |
 
 ## Live validation plan
 

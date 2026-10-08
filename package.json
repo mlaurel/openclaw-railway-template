@@ -2,6 +2,7 @@
   "name": "openclaw-railway-template",
   "private": true,
   "description": "Railway Infrastructure as Code and tests for the OpenClaw Railway template.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24"
