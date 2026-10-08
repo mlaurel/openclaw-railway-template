@@ -3,6 +3,7 @@
 *
 !config/openclaw.seed.json
 !scripts/entrypoint.sh
+!scripts/patch-machine-display-name.mjs
 !scripts/openclaw-as-node.sh
 !scripts/as-node.sh
 !scripts/brew-as-node.sh
