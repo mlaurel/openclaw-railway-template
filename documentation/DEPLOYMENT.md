@@ -304,13 +304,20 @@ default port instead of taking a `PORT` variable. To regenerate:
 It also keeps variable *references*, even mixed with literal text, so the
 template asks only for `TAILNET_DNS_NAME` and pre-fills
 `OPENCLAW_PUBLIC_ORIGIN` as `https://openclaw.${{TAILNET_DNS_NAME}}`. It drops
-variable descriptions; add those in the template editor after generating.
+variable descriptions.
 
+**Small changes** (variables, descriptions, defaults): edit the published
+template directly. Railway dashboard → workspace **Templates** → the template →
+**Edit** → **Architecture**, open a service's **Variables**, make the change,
+review **Details**, and **Apply**. Check the result with
+`railway api 'query { template(code: "openclaw-private-gateway") { serializedConfig } }'`.
+
+**Structural changes** (services, volumes, sources): regenerate. Running
 `templateGenerate` on a project that already has a template **updates that
-template in place**, even when it is published. Test changes with a separate
-scratch source project first:
+template in place**, even when it is published, and the published template's
+original source project no longer exists. So:
 
-1. In a project whose services mirror `.railway/railway.ts`, set
+1. In a scratch project whose services mirror `.railway/railway.ts`, set
    `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}`,
    `OPENCLAW_PUBLIC_ORIGIN` to `https://openclaw.${{TAILNET_DNS_NAME}}`, and
    placeholder values for `TAILNET_DNS_NAME` and `TS_AUTHKEY`.
@@ -320,6 +327,6 @@ scratch source project first:
 4. Deploy it into another scratch project
    (`railway deploy -t <code> -v openclaw.TAILNET_DNS_NAME=… -v tailscale.TS_AUTHKEY=…`)
    and wait for `openclaw` to turn healthy.
-5. Make the same change in the real source project and regenerate there, which
-   updates the published template. Re-add the variable descriptions in the
-   template editor.
+5. Publish the new template (a new URL), add the variable descriptions in the
+   template editor, point the README's Deploy button at it, and unpublish the
+   old one.
