@@ -144,6 +144,12 @@ Agent-level policy (tools, channel allowlists) is the operator's choice; see
    percent-encoded variants (verified). A general port forward would make every
    caller on Railway's private network look like a local client to the Gateway.
 
+3. **Serve opt-in webhook routes** (`scripts/webhook-relay.mjs`) on the same
+   port when `OPENCLAW_RAILWAY_WEBHOOKS` is on: `POST /hooks/<name>` to the
+   Gateway after checking the hooks token, and `POST /gmail-pubsub` to OpenClaw's
+   Gmail watcher. They're public only with a Railway domain. See
+   [WEBHOOKS.md](WEBHOOKS.md).
+
 If the sidecar process itself dies, the relay stops and nothing restarts the
 container. The Gateway keeps serving; Railway only probes at deploy time, so the
 next deploy is where it would show.

@@ -88,10 +88,19 @@ Expected result on a correctly deployed template (checked in
   including OpenClaw's own recommended Serve setup. Managed Serve doesn't use
   `trustedProxies`, and the suggested fix (trusting `127.0.0.1`) would let every
   process in the container claim to be a proxy. Leave it.
-- **With `--deep`**: on the previous layout the deep probe added
-  `gateway.probe_failed` ("missing scope: operator.read"), because it connects
-  without a device identity; the same warning appears on the unmodified official
-  image. *(Not yet re-checked with Tailscale in the container.)*
+- **With `--deep`**: adds `gateway.probe_failed`, because the deep probe
+  connects without a device identity (also on the unmodified official image;
+  re-checked 2026-10-08). It also scans installed extension code: on the
+  production deployment it flagged the `acpx` extension (`plugins.code_safety`,
+  "Shell command execution detected"), which launches coding agents by design.
+  Findings about plugins you installed are yours to review; the template adds
+  none.
+- **With webhooks on and a restricted reader** ([WEBHOOKS.md](WEBHOOKS.md)): no
+  new findings, provided `hooks.allowRequestSessionKey` stays `false`,
+  `hooks.defaultSessionKey` is set, and cross-agent session access is off
+  (`tools.sessions.visibility: agent`, `tools.agentToAgent.enabled: false`).
+  OpenClaw's own Gmail reader example enables caller-chosen session keys, which
+  the audit rates critical; the template's version doesn't.
 
 Other useful forms: `openclaw security audit --json` for automation, and
 `openclaw security audit --fix` for OpenClaw's narrow safe fixes (file
@@ -206,6 +215,17 @@ against content.
   Railway variables.
 
 See [OpenClaw's prompt-injection guidance](https://docs.openclaw.ai/gateway/security/prompt-injection).
+
+## Public webhooks
+
+Off by default. When you turn them on ([WEBHOOKS.md](WEBHOOKS.md)), the service
+gets a public Railway domain that answers only the three health checks and two
+`POST` routes; the dashboard, WebSocket, and HTTP API stay on the tailnet. Hook
+requests need the hooks token, checked by the relay before anything reaches the
+Gateway; Gmail pushes need their own push token, checked by OpenClaw's watcher.
+Repeated failures lock the caller out. Webhook and email content is untrusted:
+route it to a restricted agent (the template's `mail_reader` has no file, shell,
+web, or browser tools) and keep it out of `main`'s sessions.
 
 ## Rotating credentials
 

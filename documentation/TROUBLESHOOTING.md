@@ -125,3 +125,17 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
   on the unmodified upstream image. See [SECURITY.md](SECURITY.md#security-audit).
 - `tailscale` works in a root `railway ssh` shell too (for example
   `tailscale status`); it talks to the daemon over its socket.
+
+## Webhooks and Gmail
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `POST /hooks/...` on the Railway domain returns 404 | `OPENCLAW_RAILWAY_WEBHOOKS` isn't `on`, the method isn't `POST`, or the path isn't `/hooks/<name>` or `/gmail-pubsub`. | Set the variable (it redeploys); check the URL. |
+| 503 `hooks token not configured` | `OPENCLAW_HOOKS_TOKEN` isn't set on the service. | Set it; it redeploys. |
+| 401 from the relay | Missing or wrong hooks token. | Send `Authorization: Bearer <token>`, `x-openclaw-token`, or `/hooks/<name>/<token>`. Query-string tokens aren't accepted. |
+| 429 `too many failed attempts` | 20 failures from that caller within a minute; locked out for 10 minutes. | Fix the token and wait. Other callers aren't affected. |
+| 400 naming the agent | The hook targets an agent outside `hooks.allowedAgentIds`. | Target `mail_reader` (or add the agent deliberately). |
+| Startup refusal: `hooks.gmail.tailscale.mode is …` | OpenClaw's Gmail watcher would run Tailscale Funnel on port 443 and publish the dashboard. | `openclaw config set hooks.gmail.tailscale.mode off`; publish through the Railway domain ([WEBHOOKS.md](WEBHOOKS.md)). |
+| `gog-login`: `no refresh token received; try again with --force-consent` | The account already granted these scopes to the project, so Google skipped the consent screen. | Rerun `gog-login` with `--force-consent`. |
+| Gmail watcher can't read its token | `GOG_KEYRING_PASSWORD` isn't set as a Railway variable; the watcher runs without a terminal. | Set it to `gog`'s keyring password. |
+| A portal shows "Waiting for the app on port …" | The development server isn't running; a server started in the background by an agent turn run from the CLI didn't outlive the turn. | Start the server again (or ask the agent from the dashboard or a chat); the portal reconnects. |

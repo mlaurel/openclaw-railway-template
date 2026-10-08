@@ -44,7 +44,10 @@ reach. The entrypoint refuses to start if `PORT` is `18789`.
 | `TS_HOSTNAME` | no | no | Overrides the machine name (default `openclaw`). Takes effect on the next login. |
 | Provider key, e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | for the provider you choose | **yes** | Model credential. Onboarding stores an env reference to it, not the value. |
 | `OPENCLAW_MACHINE_DISPLAY_NAME` | no | no | The Gateway's name in OpenClaw's machine picker. Defaults to `TS_HOSTNAME` (`openclaw`); without the image's patch OpenClaw would show Railway's per-deploy container hostname. |
-| `GOG_KEYRING_PASSWORD` | for the gog skill | **yes** | Password for `gog`'s token file on the volume. See [TOOLS.md](TOOLS.md#google-gog). |
+| `GOG_KEYRING_PASSWORD` | for the gog skill | **yes** | Password for `gog`'s token file on the volume. Required for the Gmail watcher, which runs non-interactively. See [TOOLS.md](TOOLS.md#google-gog). |
+| `OPENCLAW_RAILWAY_WEBHOOKS` | no | no | `on` serves the webhook routes (`POST /hooks/<name>`, `POST /gmail-pubsub`) on `PORT`. Public only with a Railway domain. See [WEBHOOKS.md](WEBHOOKS.md). |
+| `OPENCLAW_HOOKS_TOKEN` | for webhooks | **yes** | Hooks token. `hooks.token` references it as `${OPENCLAW_HOOKS_TOKEN}`, and the relay checks it before forwarding. Use a token dedicated to hooks. |
+| `OPENCLAW_GMAIL_PUSH_TOKEN` | for Gmail push | **yes** | Token in the Pub/Sub push URL; `hooks.gmail.pushToken` references it. |
 | `TELEGRAM_BOT_TOKEN` | for Telegram | **yes** | Bot token from @BotFather. Its presence enables Telegram (DM pairing, allowlisted groups). |
 
 Every variable on the service managed by `.railway/railway.ts` must also appear in

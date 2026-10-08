@@ -82,7 +82,11 @@ Nothing needs a `127.0.0.1` redirect or a pasted URL.
 
    Open the printed URL on a device on your tailnet and approve. `gog-login`
    prints the redirect URI it uses; it must match the one registered in step 1.
-   Check with `as-node gog auth list --check`.
+   Check with `as-node gog auth list --check`. If it reports
+   `no refresh token received`, the account had already granted these scopes to
+   the project: rerun with `--force-consent`. To add the Web client next to an
+   existing one, store it with `gog auth credentials --client web <file>` and
+   pass `--client web` to `gog-login`.
 
 **Verified** (2026-10-08): with a Web client in Google Cloud, Google accepts the
 `.ts.net:8443` redirect URI and shows its account chooser; on a test node, a
