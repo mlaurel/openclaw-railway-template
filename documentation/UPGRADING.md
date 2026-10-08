@@ -159,12 +159,35 @@ versions; roll back by reverting the commit.
 Deployments created before Tailscale moved into the `openclaw` container had a
 separate `tailscale` service and volume, raw TCP forwarding, and
 `OPENCLAW_PUBLIC_ORIGIN`. The new image refuses to start on such a volume, with
-a message naming these steps. **(live-unverified:** the steps below were checked
-locally against an old-layout volume; the live migration has not been run yet.)
+a message naming the config commands below. This was run on a production
+deployment on 2026-10-08, in this order; the Gateway was unreachable for about
+3 minutes (steps 3–5).
 
-1. **Migrate the config** while the old deployment is still running, from a
-   shell on its volume. Order matters: OpenClaw rejects `tailscale.mode serve`
-   while `bind` is `lan`.
+0. **Back up.** Railway volume snapshots weren't available on the Hobby plan, so
+   take OpenClaw's archive plus your home directory, copy both off Railway, and
+   check them:
+
+   ```bash
+   railway ssh --service openclaw
+   install -d -m 700 -o node -g node /tmp/backup
+   as-node sh -c 'cd /tmp/backup && openclaw backup create --verify --output /tmp/backup'
+   tar -C /data -czf /tmp/backup/home.tar.gz home && cd /tmp/backup && sha256sum * > SHA256SUMS
+   ```
+
+   Then from your machine, using the deployment instance ID (dashboard, or
+   `railway deployment list` plus the API's `deployment { instances { id } }`):
+   `scp <instance-id>@ssh.railway.com:/tmp/backup/* ./backup/` and
+   `shasum -a 256 -c SHA256SUMS`. The archive and tarball contain credentials;
+   keep them private.
+1. **Set the auth key** on the `openclaw` service without redeploying (a new
+   key: single-use, not ephemeral):
+
+   ```bash
+   pbpaste | tr -d '\n' | railway variable set TS_AUTHKEY --stdin --service openclaw --skip-deploys
+   ```
+
+2. **Migrate the config** from a shell on the running deployment. Order matters:
+   OpenClaw rejects `tailscale.mode serve` while `bind` is `lan`.
 
    ```bash
    railway ssh --service openclaw -- openclaw config set gateway.bind loopback
@@ -173,32 +196,29 @@ locally against an old-layout volume; the live migration has not been run yet.)
    railway ssh --service openclaw -- openclaw config unset plugins.entries.device-pair
    ```
 
-   OpenClaw applies them at the next start (it prints "Restart the gateway to
-   apply"), which should be the new image's. Do steps 1–4 in one sitting: if
-   the old container restarts in between, it fails to start, because the old
-   image has no Tailscale daemon for `serve` mode. Deploying the new image
-   fixes that.
-2. **Free the machine name.** In the Tailscale admin console, remove the old
-   `openclaw` machine (the `tailscale` service's node). Otherwise the new
-   container registers as `openclaw-1` and clients configured for
-   `openclaw.<tailnet>.ts.net` stop connecting. This takes the old path offline.
-3. **Set the auth key** on the `openclaw` service (a new key, not the one the
-   `tailscale` service used):
-
-   ```bash
-   pbpaste | tr -d '\n' | railway variable set TS_AUTHKEY --stdin --service openclaw --skip-deploys
-   ```
-
-4. **Deploy** the new image (merge, or `railway redeploy --service openclaw --yes`
-   if `main` already has it). Expect `logged in to Tailscale as openclaw` and
-   `[tailscale] serve enabled: https://openclaw.<tailnet>.ts.net/`.
-5. **Remove the old service.** With the new `.railway/railway.ts`,
-   `railway config plan` shows the `tailscale` service and `tailscale-state`
-   volume as deletions. Read the plan, then `railway config apply`. Delete
-   `OPENCLAW_PUBLIC_ORIGIN` from the `openclaw` service too (the plan lists it).
-6. **Tidy up.** Tag the new machine or disable its key expiry. The Mac app keeps
-   its URL and token; device pairings live on the `openclaw` volume and carry
-   over.
+   Do steps 2–4 in one sitting: if the old container restarts in between, it
+   can't start with this config. Deploying the new image fixes that.
+3. **Deploy** the new image (merge it, or redeploy if `main` already has it).
+4. **While it builds, free the machine name.** Stop the old `tailscale`
+   deployment (dashboard, or the API's `deploymentStop`; keep its volume until
+   you've verified the result), then remove the old `openclaw` machine in the
+   Tailscale admin console. Otherwise the new container registers as
+   `openclaw-1` and clients configured for `openclaw.<tailnet>.ts.net` stop
+   connecting. Expect `logged in to Tailscale as openclaw` and
+   `[tailscale] serve enabled: https://openclaw.<tailnet>.ts.net/` in the new
+   deployment's logs. A config with many plugins took about 2 minutes to pass
+   the health check on first boot.
+5. **Verify.** The Mac app reconnected on its own (pairings live on the
+   `openclaw` volume); the dashboard opened signed in through tailnet identity;
+   `openclaw qr` showed the `wss://` address; paired devices, agents, auth
+   profiles, channels, and tool logins were unchanged.
+6. **Remove the old service.** With the new `.railway/railway.ts`,
+   `railway config plan` shows the `tailscale` service and
+   `OPENCLAW_PUBLIC_ORIGIN` as deletions; `railway config apply` removes them.
+   Deleting the variable redeploys the Gateway once (Railway can't skip that).
+   Deleting the service left its `tailscale-state` volume behind, detached;
+   delete it in the dashboard or with the API's `volumeDelete`.
+7. **Tidy up.** Disable key expiry on the new machine (or tag it).
 
 ## Migrating from the previous deployment
 

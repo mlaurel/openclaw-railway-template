@@ -113,7 +113,8 @@ when Serve is up.
   `tailscale serve status` may show no persistent config while it is active.
 - **Re-keying the node.** Remove the `openclaw` machine in the admin console,
   set a new `TS_AUTHKEY`, and redeploy. With the old identity revoked, the node
-  is logged out, and the entrypoint uses the new key. **(live-unverified)**
+  is logged out, and the entrypoint uses the new key. (Verified when migrating
+  production on 2026-10-08.)
 - **Node key expiry.** Tagged nodes don't expire by default. If you didn't tag
   the node, disable key expiry in the admin console or it will drop off the
   tailnet after the tailnet's expiry period (180 days by default); the container

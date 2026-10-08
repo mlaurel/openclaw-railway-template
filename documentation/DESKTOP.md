@@ -92,8 +92,8 @@ the volume and survive redeploys. Revoke a device with
 
 Verified on a live Railway deployment (2026-10-08) with the macOS app 2026.9.8,
 connected as primary over `wss://`, with the previous two-service layout.
-**(live-unverified** with Tailscale inside the `openclaw` container; the URL and
-token are unchanged.)
+After the move to Tailscale inside the `openclaw` container, the app reconnected
+on its own: the URL and token are unchanged and its pairing lives on the volume.
 
 ## Browser dashboard
 

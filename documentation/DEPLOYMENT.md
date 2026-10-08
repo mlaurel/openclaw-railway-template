@@ -230,8 +230,8 @@ allow ([SECURITY.md](SECURITY.md#local-node-permissions-the-mac)); from the CLI
 it's `openclaw nodes pending` / `openclaw nodes approve <id>`.
 
 Pairing is stored in `/data/.openclaw/state/openclaw.sqlite` and survives
-redeploys. **(live-unverified:** Mac app pairing has not yet been run against
-this layout.)
+redeploys; existing pairings carried over the move to this layout. (A
+brand-new pairing on this layout is **live-unverified**.)
 
 ## 10. Connect Telegram
 
