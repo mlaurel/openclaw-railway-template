@@ -25,7 +25,7 @@ probe-only health relay in `scripts/sidecar.mjs`, and one audit warning
 
 ## Local tests
 
-- `sh tests/image.test.sh`: core tier, **68 checks** in a full run (67 with
+- `sh tests/image.test.sh`: core tier, **69 checks** in a full run (68 with
   `SKIP_BUILD=1`), all passing, no tailnet needed. It covers the relay's 404
   matrix and the Gateway port being unreachable from the network, loopback
   authentication and proxy attribution, the entrypoint's refusals (missing or
@@ -33,7 +33,10 @@ probe-only health relay in `scripts/sidecar.mjs`, and one audit warning
   watchdog, persistence, ownership repair, and crash handling.
 - The same script's **live tier** runs when `TAILSCALE_TEST_AUTHKEY` is set (a
   reusable, ephemeral key): real login, Serve URL, QR address, key hygiene,
-  restart reuse, watchdog. CI passes it from an optional repository secret.
+  restart reuse, watchdog: 10 checks, plus 3 for `gog-login`'s tailnet callback
+  route and 1 dashboard check when `TAILSCALE_TEST_ON_TAILNET=1` (the test
+  machine is on the tailnet). All 81 passed on 2026-10-08. CI passes the key
+  from an optional repository secret.
 - `npm run test:railway-config` (5 tests), `npm run typecheck`, ShellCheck,
   Hadolint, and actionlint.
 

@@ -86,6 +86,8 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 | `curl https://openclaw.<tailnet>.ts.net` times out | Access policy doesn't allow your device, or the machine is offline. | Check the policy grant and `tailscale ping openclaw`. |
 | The first HTTPS request takes ~15 s | A new machine's certificate is being issued. | Nothing; later requests are fast. |
 | HTTPS never works and the Gateway fails to start Serve | Tailnet HTTPS certificates are not enabled. There is no plaintext fallback. | Admin console → DNS → HTTPS Certificates, then redeploy. |
+| Google shows `redirect_uri_mismatch` during `gog-login` | The client is a Desktop app client, or its redirect URI doesn't match the one `gog-login` printed (machine name, `:8443`). | Use a Web application client and register exactly the printed URI. New clients can take a few minutes to take effect. [TOOLS.md](TOOLS.md#google-gog) |
+| `gog-login`'s callback page never loads | The browser isn't on the tailnet, or the access policy doesn't allow port 8443. | Open the URL on a tailnet device; allow `tcp:8443` ([TAILSCALE.md](TAILSCALE.md)). |
 | Machine logged out after months | Untagged machine hit key expiry. | Tag it or disable key expiry, then set a new `TS_AUTHKEY` and redeploy. |
 | Everything works but is slow: HTTPS handshakes take ~1 s, pages load at ~10 KB/s, while `tailscale ping` is fast | Tunnel packets larger than Railway's 1316-byte MTU are being lost. | Make sure the image's `TS_DEBUG_MTU=1236` is in effect and that no variable overrides it. Check with `curl -w '%{time_appconnect}\n' -o /dev/null -s https://openclaw.<tailnet>.ts.net/healthz` (expect well under 0.2 s after the first request). |
 

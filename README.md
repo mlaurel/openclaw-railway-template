@@ -76,6 +76,7 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 | --- | --- |
 | `Dockerfile` | OpenClaw image: official base, Tailscale binaries, entrypoint, seed config, skill tools, Homebrew seed |
 | `scripts/entrypoint.sh` | Environment checks, volume preparation, first-boot seeding, Tailscale login, privilege drop |
+| `scripts/gog-login.sh` | `gog-login`: Google sign-in for the gog skill through the tailnet (see [TOOLS.md](documentation/TOOLS.md#google-gog)) |
 | `scripts/sidecar.mjs` | Runs `tailscaled` (stops the container if it exits) and relays Railway's health check to the loopback Gateway |
 | `scripts/as-node.sh` | `as-node <command>`: run a command as `node` from a root `railway ssh` shell |
 | `scripts/openclaw-as-node.sh` | Runs the OpenClaw CLI through `as-node` |

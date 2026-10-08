@@ -28,7 +28,7 @@ jobs:
       - name: ShellCheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 \
-            scripts/entrypoint.sh scripts/openclaw-as-node.sh scripts/as-node.sh scripts/brew-as-node.sh tests/image.test.sh
+            scripts/entrypoint.sh scripts/openclaw-as-node.sh scripts/as-node.sh scripts/brew-as-node.sh scripts/gog-login.sh tests/image.test.sh
       - name: Hadolint
         run: |
           docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile

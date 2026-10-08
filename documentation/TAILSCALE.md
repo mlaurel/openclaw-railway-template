@@ -45,7 +45,9 @@ In the [admin console](https://login.tailscale.com/admin):
      },
      "grants": [
        // Only the operator's devices may reach the Gateway, and only HTTPS.
-       { "src": ["you@example.com"], "dst": ["tag:openclaw"], "ip": ["tcp:443"] },
+       // 8443 is gog-login's temporary Google sign-in callback (TOOLS.md);
+       // drop it if you don't use gog.
+       { "src": ["you@example.com"], "dst": ["tag:openclaw"], "ip": ["tcp:443", "tcp:8443"] },
      ],
      "tests": [
        { "src": "you@example.com", "accept": ["tag:openclaw:443"] },

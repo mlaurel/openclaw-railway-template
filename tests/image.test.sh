@@ -141,7 +141,7 @@ check "installed Tailscale ($installed_tailscale) matches the Dockerfile pin ($p
 log "bundled tools"
 check "the GitHub CLI is installed for GitHub connections and runs as node" \
   'docker run --rm --user node --entrypoint gh "$image" --version | grep -E "^gh version [0-9]"'
-for tool_check in "gog --version" "jq --version" "tmux -V" "codex --version" "claude --version"; do
+for tool_check in "gog --version" "jq --version" "tmux -V" "codex --version" "claude --version" "command -v gog-login"; do
   check "$tool_check runs as node" 'docker run --rm --user node --entrypoint sh "$image" -c "$tool_check"'
 done
 # OpenClaw's image processor (Rastermill) can't decode HEIC itself and falls
@@ -360,6 +360,20 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   if [ "${TAILSCALE_TEST_ON_TAILNET:-}" = 1 ]; then
     check "the dashboard answers over the tailnet at https://$live_name/" \
       '[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "https://$live_name/healthz")" = 200 ]'
+    # gog-login with a dummy Web client: Google is never contacted. A forged
+    # callback over the tailnet must reach gog (which rejects its state) and
+    # the temporary :8443 route must end with the command.
+    docker exec -u node -e GOG_KEYRING_PASSWORD=test-password "$live" sh -c '
+      printf "%s" "{\"web\":{\"client_id\":\"0-test.apps.googleusercontent.com\",\"client_secret\":\"test\",\"auth_uri\":\"https://accounts.google.com/o/oauth2/auth\",\"token_uri\":\"https://oauth2.googleapis.com/token\"}}" > /tmp/test-client.json
+      gog auth keyring file && gog auth credentials /tmp/test-client.json && rm /tmp/test-client.json
+      (timeout 90 gog-login someone@example.com --services gmail --no-input > /tmp/gog-login.out 2>&1 &)' >/dev/null 2>&1
+    sleep 6
+    check "gog-login prints the tailnet redirect URI" \
+      'docker exec "$live" grep -F "https://$live_name:8443/oauth2/callback" /tmp/gog-login.out'
+    check "a forged OAuth callback over the tailnet reaches gog and is rejected" \
+      '[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "https://$live_name:8443/oauth2/callback?code=forged&state=wrong")" = 400 ] && sleep 2 && docker exec "$live" grep -F "state mismatch" /tmp/gog-login.out'
+    check "the temporary :8443 route ends with gog-login" \
+      '[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://$live_name:8443/oauth2/callback")" = 000 ]'
   fi
   docker restart "$live" >/dev/null
   attempt=0

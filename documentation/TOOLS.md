@@ -47,11 +47,16 @@ as-node claude auth login
 ## Google (`gog`)
 
 `gog` needs your own Google OAuth client and a password for its token file.
-**(live-unverified:** these steps follow the gog skill's instructions for
-headless hosts; the flow has not been run against this deployment yet.)
+`gog-login` signs it in through your tailnet: Google redirects your browser to
+`https://openclaw.<tailnet>.ts.net:8443/oauth2/callback`, and a Tailscale Serve
+route that exists only while `gog-login` runs hands the callback to `gog`.
+Nothing needs a `127.0.0.1` redirect or a pasted URL.
 
-1. In Google Cloud Console, create an OAuth client of type **Desktop app**, enable
-   the APIs you want (Gmail, Calendar, Drive, …), and download its JSON.
+1. In Google Cloud Console, enable the APIs you want (Gmail, Calendar, Drive, …)
+   and create an OAuth client of type **Web application** (a **Desktop app**
+   client only allows `127.0.0.1` redirects). Under **Authorized redirect URIs**
+   add `https://openclaw.<tailnet>.ts.net:8443/oauth2/callback`, using the
+   machine's real name, and download the client JSON.
 2. Give the token file a password, stored as a sealed Railway variable:
 
    ```bash
@@ -66,26 +71,28 @@ headless hosts; the flow has not been run against this deployment yet.)
    scp client_secret.json <service-instance-id>@ssh.railway.com:/data/home/gog-client.json
    ```
 
-4. Configure `gog` and start the remote authorization:
+4. Store the client, then sign in from a shell (it waits for the browser):
 
    ```bash
-   railway ssh --service openclaw -- as-node gog auth keyring file
-   railway ssh --service openclaw -- as-node gog auth credentials /data/home/gog-client.json
-   railway ssh --service openclaw -- as-node gog auth add you@gmail.com \
-     --services gmail,calendar,drive,contacts,docs,sheets --remote --step 1
+   railway ssh --service openclaw
+   as-node gog auth keyring file
+   as-node gog auth credentials /data/home/gog-client.json && rm /data/home/gog-client.json
+   gog-login you@gmail.com --services gmail,calendar,drive,contacts,docs,sheets
    ```
 
-5. Open the printed `auth_url`, approve, and copy the URL your browser ends on
-   (a failed `localhost` page is expected). Finish in a shell, not in chat:
+   Open the printed URL on a device on your tailnet and approve. `gog-login`
+   prints the redirect URI it uses; it must match the one registered in step 1.
+   Check with `as-node gog auth list --check`.
 
-   ```bash
-   railway ssh --service openclaw -- as-node gog auth add you@gmail.com \
-     --services gmail,calendar,drive,contacts,docs,sheets --remote --step 2 --auth-url '<the localhost URL>'
-   railway ssh --service openclaw -- as-node gog auth list --check
-   ```
+**Verified** (2026-10-08): with a Web client in Google Cloud, Google accepts the
+`.ts.net:8443` redirect URI and shows its account chooser; on a test node, a
+callback sent over the tailnet reached `gog`, which rejected a forged `state`,
+and the route was gone once `gog-login` exited (the live test tier repeats
+this). Completing consent and the token exchange is the standard `gog` flow and
+was not repeated in tests. The browser must be on the tailnet and allowed to
+reach the machine on port 8443.
 
-Never paste the callback URL, client secret, or tokens into a chat with the
-agent.
+Never paste the client secret or tokens into a chat with the agent.
 
 ## Coding agents (`claude`, `codex`)
 

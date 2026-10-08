@@ -143,9 +143,12 @@ COPY scripts/sidecar.mjs /usr/local/lib/openclaw-railway/sidecar.mjs
 COPY scripts/as-node.sh /usr/local/bin/as-node
 COPY scripts/openclaw-as-node.sh /usr/local/sbin/openclaw
 COPY scripts/brew-as-node.sh /usr/local/sbin/brew
+# gog-login: Google sign-in for the gog skill through the tailnet instead of
+# a 127.0.0.1 redirect. See documentation/TOOLS.md.
+COPY scripts/gog-login.sh /usr/local/bin/gog-login
 
 RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json /usr/local/lib/openclaw-railway/sidecar.mjs \
- && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/bin/as-node /usr/local/sbin/openclaw /usr/local/sbin/brew \
+ && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/bin/as-node /usr/local/bin/gog-login /usr/local/sbin/openclaw /usr/local/sbin/brew \
  && node /app/openclaw.mjs --version \
  && tailscale version
 
