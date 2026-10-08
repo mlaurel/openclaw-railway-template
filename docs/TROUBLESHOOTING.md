@@ -80,6 +80,7 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 | HTTPS fails but `http://openclaw.<tailnet>.ts.net:18789` works | Tailnet HTTPS certificates not enabled. | Admin console → DNS → HTTPS Certificates. |
 | Tailscale log: `localbackend: failed to TCP proxy port … to openclaw.railway.internal:8080` | The Gateway is down, the service isn't named `openclaw`, or the environment is a legacy IPv6-only one. | Check the `openclaw` service; rename it; deploy into an environment created after 2025-10-16. |
 | Node logged out after months | Untagged node hit key expiry. | Tag it or disable key expiry. |
+| Everything works but is slow: HTTPS handshakes take ~1 s, pages load at ~10 KB/s, while `tailscale ping` is fast | Tunnel packets larger than Railway's 1316-byte MTU are being lost. | Make sure the `tailscale` image sets `TS_DEBUG_MTU=1236` (it does by default) and that no variable overrides it. Check with `curl -w '%{time_appconnect}\n' -o /dev/null -s https://openclaw.<tailnet>.ts.net/healthz` (expect well under 0.2 s). |
 
 ## Connecting
 

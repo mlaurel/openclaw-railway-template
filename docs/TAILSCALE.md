@@ -25,6 +25,7 @@ HTTPS certificates. OpenClaw clients accept plaintext `ws://` to `.ts.net` hosts
 | `TS_SERVE_CONFIG` | image | `/etc/tailscale/serve.json` | Applied after login; `${TS_CERT_DOMAIN}` becomes the node's MagicDNS name. Containerboot watches the file, but it is baked into the image, so changes ship as a redeploy. |
 | `TS_HOSTNAME` | image (override in Railway) | `openclaw` | MagicDNS name. If the name is taken, Tailscale appends a suffix such as `openclaw-1`. |
 | `TS_ENABLE_HEALTH_CHECK`, `TS_LOCAL_ADDR_PORT` | image | `true`, `[::]:8080` (Railway's default `PORT`) | `/healthz` returns 200 once the node has a tailnet IP, 503 before. Railway's health check uses it. |
+| `TS_DEBUG_MTU` | image | `1236` | Tunnel MTU. Railway's network interface has a 1316-byte MTU, and a full Tailscale packet is 1280 plus 80 bytes of WireGuard overhead, so larger packets were lost: TLS handshakes took 0.6–1.7 s and transfers ran near 10 KB/s. 1236 = 1316 − 80. Measured after the change: 65–75 ms handshakes, a 20 KB page in 0.25 s. This is a debug knob in Tailscale, so re-check it when upgrading Tailscale. |
 | `TS_AUTHKEY` | Railway (secret) | `tskey-auth-…` | First login only. |
 | `TS_ACCEPT_DNS` | default (`false`) | — | Keeps Railway's resolver, which `openclaw.railway.internal` depends on. |
 

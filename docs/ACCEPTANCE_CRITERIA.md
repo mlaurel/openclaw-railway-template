@@ -88,6 +88,11 @@ Project `openclaw`, environment `production`, region `us-west2`. Done so far:
   project; `openclaw` turned healthy with a generated token and no `PORT`
   variable.
 
+- Performance: Railway's 1316-byte network MTU dropped full-size Tailscale
+  packets (0.6–1.7 s TLS handshakes, ~10 KB/s). Setting `TS_DEBUG_MTU=1236`
+  brought handshakes to 65–75 ms and a 20 KB page to 0.25 s, over both the
+  tailnet's IPv4 and IPv6 addresses.
+
 Remaining: Telegram with a real bot, crash and backup drills.
 
 ## Live validation plan

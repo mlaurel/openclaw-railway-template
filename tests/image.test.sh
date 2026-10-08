@@ -247,7 +247,7 @@ check "the Gateway recovers after a crash" 'wait_for_startup'
 log "tailscale image"
 tailscale_environment="$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$tailscale_image")"
 for setting in TS_USERSPACE=true TS_STATE_DIR=/var/lib/tailscale TS_AUTH_ONCE=true \
-  TS_SERVE_CONFIG=/etc/tailscale/serve.json TS_ENABLE_HEALTH_CHECK=true; do
+  TS_SERVE_CONFIG=/etc/tailscale/serve.json TS_ENABLE_HEALTH_CHECK=true TS_DEBUG_MTU=1236; do
   check "defaults to $setting" 'printf "%s\n" "$tailscale_environment" | grep -qx "$setting"'
 done
 docker run -d --name "$tailscale" --network "$network" -v "$run_id-tailscale-state:/var/lib/tailscale" "$tailscale_image" >/dev/null

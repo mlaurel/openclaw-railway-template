@@ -14,10 +14,16 @@ COPY serve.json /etc/tailscale/serve.json
 # service's Railway volume so the node keeps its identity across deploys, and
 # TS_AUTH_ONCE skips re-authentication when that state already exists. The
 # health endpoint uses 8080, the PORT Railway injects by default.
+#
+# TS_DEBUG_MTU: Railway's container network has a 1316-byte MTU, smaller than a
+# full Tailscale packet (1280 + 80 bytes of WireGuard/UDP/IPv6 overhead). Larger
+# packets were silently lost, which made every TLS handshake take 0.6-1.7 s and
+# capped transfers near 10 KB/s. 1236 = 1316 - 80, so tunnel packets fit.
 ENV TS_SERVE_CONFIG=/etc/tailscale/serve.json \
     TS_STATE_DIR=/var/lib/tailscale \
     TS_USERSPACE=true \
     TS_AUTH_ONCE=true \
     TS_HOSTNAME=openclaw \
     TS_ENABLE_HEALTH_CHECK=true \
-    TS_LOCAL_ADDR_PORT=[::]:8080
+    TS_LOCAL_ADDR_PORT=[::]:8080 \
+    TS_DEBUG_MTU=1236

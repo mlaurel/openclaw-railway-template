@@ -200,6 +200,10 @@ and has no Railway domain.
   `PORT` variable. Railway templates drop literal variable values, so this keeps
   the published template free of hand-entered defaults.
 - The service builds with `tailscale/` as its root directory.
+- `TS_DEBUG_MTU=1236` lowers the tunnel MTU to fit Railway's 1316-byte network
+  MTU (1316 − 80 bytes of WireGuard overhead). Without it, full-size packets were
+  lost on the way out of Railway, so TLS handshakes took 0.6–1.7 s and transfers
+  ran near 10 KB/s, while small requests looked fine.
 
 ## Requirements and limits
 
