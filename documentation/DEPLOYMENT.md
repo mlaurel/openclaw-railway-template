@@ -129,7 +129,7 @@ Expect, in order:
 
 Railway marks the deploy healthy once `/startupz` returns 200 through the health
 relay (≈3 minutes the first time, mostly pulling the base image). A machine
-named `openclaw` is now in your tailnet. If the tailnet already had one, Tailscale names this machine `openclaw-1`, the login line says `logged in to Tailscale as openclaw-1 (openclaw was already taken in this tailnet)`, and the address follows; use the address from the `the Gateway will be at` line. From any tailnet device:
+named `openclaw` is now in your tailnet. If the tailnet already had one, Tailscale names this machine `openclaw-1`, the login line says `logged in to Tailscale as openclaw-1 (asked for openclaw)`, and the address follows; use the address from the `the Gateway will be at` line. From any tailnet device:
 
 ```bash
 curl -fsS https://openclaw.<your-tailnet>.ts.net/healthz   # {"ok":true,"status":"live"}

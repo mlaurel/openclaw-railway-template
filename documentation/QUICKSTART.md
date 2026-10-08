@@ -46,7 +46,7 @@ admin console.
 The deploy log names the address either way:
 
 ```
-openclaw-railway: logged in to Tailscale as openclaw-1 (openclaw was already taken in this tailnet)
+openclaw-railway: logged in to Tailscale as openclaw-1 (asked for openclaw)
 openclaw-railway: the Gateway will be at https://openclaw-1.<your-tailnet>.ts.net/
 ```
 

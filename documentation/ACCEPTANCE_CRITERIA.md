@@ -34,7 +34,7 @@ probe-only health relay in `scripts/sidecar.mjs`, and one audit warning
   the `tailscaled` watchdog, persistence, ownership repair, and crash handling.
 - The same script's **live tier** runs when `TAILSCALE_TEST_AUTHKEY` is set (a
   reusable, ephemeral key): real login, Serve URL, QR address, key hygiene,
-  restart reuse, watchdog, the logged tailnet address (on every boot, and the suffixed name when a second machine asks for a taken hostname), and, with `TAILSCALE_TEST_ON_TAILNET=1`, the
+  restart reuse, watchdog, the logged tailnet address (on every boot, and the name Tailscale assigned when a second machine asks for a taken hostname in capitals), and, with `TAILSCALE_TEST_ON_TAILNET=1`, the
   dashboard over the tailnet and `gog-login`'s callback route: 17 checks. All
   105 passed on 2026-10-08. CI passes the key from an optional repository
   secret.

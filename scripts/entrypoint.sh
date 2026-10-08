@@ -136,8 +136,10 @@ if [ -z "$without_tailscale" ]; then
     logged_in=1
   fi
 
-  # Tailscale adds a suffix (openclaw-1) when the tailnet already has a machine
-  # with the requested name, so report the name it actually assigned.
+  # The assigned name can differ from TS_HOSTNAME: Tailscale adds a suffix
+  # (openclaw-1) when the tailnet already has the name, and normalizes names that
+  # aren't valid DNS labels. Report the name it actually assigned, without
+  # guessing which of the two happened.
   dns_name="$(as_node tailscale status --json 2>/dev/null | node -e '
     let input = "";
     process.stdin.on("data", (chunk) => (input += chunk)).on("end", () => {
@@ -146,7 +148,7 @@ if [ -z "$without_tailscale" ]; then
   machine_name="${dns_name%%.*}"
   if [ -n "${logged_in:-}" ]; then
     if [ -n "$machine_name" ] && [ "$machine_name" != "$TS_HOSTNAME" ]; then
-      echo "openclaw-railway: logged in to Tailscale as $machine_name ($TS_HOSTNAME was already taken in this tailnet)"
+      echo "openclaw-railway: logged in to Tailscale as $machine_name (asked for $TS_HOSTNAME)"
     else
       echo "openclaw-railway: logged in to Tailscale as ${machine_name:-$TS_HOSTNAME}"
     fi

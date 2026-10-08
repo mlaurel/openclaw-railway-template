@@ -446,10 +446,12 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     check "the temporary :8443 route ends with gog-login" \
       '[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://$live_name:8443/oauth2/callback")" = 000 ]'
   fi
-  # A second machine asking for the same name gets a suffix from Tailscale; the
-  # entrypoint must report the name it actually got, not the one it asked for.
+  # A second machine asking for the same name, in capitals, gets a normalized,
+  # suffixed name from Tailscale. The entrypoint must report the name it got and
+  # the one it asked for, without claiming why they differ.
+  twin_requested="$(printf '%s' "$live_hostname" | tr '[:lower:]' '[:upper:]')"
   docker run -d --name "$live_twin" -v "$run_id-live-twin-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
-    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$live_hostname" "$image" >/dev/null
+    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$twin_requested" "$image" >/dev/null
   attempt=0
   until docker logs "$live_twin" 2>&1 | grep -qE "serve enabled|serve failed|login failed" || [ "$attempt" -ge 90 ]; do
     sleep 2
@@ -457,8 +459,8 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   done
   twin_name="$(tailscale_field "$live_twin" DNSName 2>/dev/null || true)"
   twin_machine="${twin_name%%.*}"
-  check "a taken hostname is reported as the suffixed name Tailscale assigned ($twin_machine)" \
-    '[ "$twin_machine" != "$live_hostname" ] && [ -n "$twin_machine" ] && docker logs "$live_twin" 2>&1 | grep -F "logged in to Tailscale as $twin_machine ($live_hostname was already taken in this tailnet)"'
+  check "a taken, capitalized hostname is reported as the name Tailscale assigned ($twin_machine)" \
+    '[ "$twin_machine" != "$live_hostname" ] && [ -n "$twin_machine" ] && docker logs "$live_twin" 2>&1 | grep -F "logged in to Tailscale as $twin_machine (asked for $twin_requested)" && ! docker logs "$live_twin" 2>&1 | grep -F "already taken"'
   check "the suffixed machine logs its own address and serves there" \
     'docker logs "$live_twin" 2>&1 | grep -F "the Gateway will be at https://$twin_name/" && docker logs "$live_twin" 2>&1 | grep -F "serve enabled: https://$twin_name/"'
   docker rm -f "$live_twin" >/dev/null 2>&1 || true
