@@ -1,76 +1,102 @@
 # Architecture
 
-Two Railway services in one project environment, no public ingress.
+One Railway service with one volume, no public ingress. Tailscale runs inside
+the same container as the Gateway, and OpenClaw manages Tailscale Serve itself.
 
-```text
-  macOS app / browser / phone / CLI          (your tailnet devices)
-                 │
-                 │  WireGuard (Tailscale)
-                 │  wss://openclaw.<tailnet>.ts.net        (TLS at Tailscale, port 443)
-                 │  ws://openclaw.<tailnet>.ts.net:18789   (fallback, no TLS)
-                 ▼
- ┌─────────────────────── Railway project environment ───────────────────────┐
- │                                                                           │
- │  tailscale service                         openclaw service               │
- │  tailscale/tailscale:v1.102.5              ghcr.io/openclaw/openclaw:2026.9.8
- │  containerboot, userspace networking       openclaw gateway --bind lan    │
- │  Serve: raw TCP forward ───────────────►   :8080 (WebSocket + HTTP)       │
- │         private network                    token auth + device pairing   │
- │         openclaw.railway.internal:8080                                    │
- │  volume: /var/lib/tailscale                volume: /data                  │
- │          (node identity)                           └── .openclaw/ (all state)
- └───────────────────────────────────────────────────────────────────────────┘
-                                                  │ outbound only
-                                                  ▼
-                                      model providers, Telegram Bot API
+```mermaid
+flowchart LR
+    clients["Mac app, browser, phone, CLI<br/>(your tailnet devices)"]
+    railwayCheck["Railway deploy health check"]
+    providers["Model providers,<br/>Telegram Bot API"]
+
+    subgraph container["openclaw service (one container)"]
+        tailscaled["tailscaled<br/>userspace, as node"]
+        serve["OpenClaw-managed Serve<br/>HTTPS :443 on openclaw.&lt;tailnet&gt;.ts.net"]
+        gateway["Gateway<br/>127.0.0.1:18789 (loopback only)"]
+        relay["sidecar relay<br/>:8080, probe paths only"]
+        volume[("/data volume")]
+    end
+
+    clients -- "WireGuard (Tailscale)" --> tailscaled
+    tailscaled --> serve
+    serve -- "dedicated loopback listener" --> gateway
+    railwayCheck -- "/startupz" --> relay
+    relay -- "/healthz, /readyz, /startupz" --> gateway
+    gateway --> volume
+    gateway -- "outbound only" --> providers
 ```
 
-Neither service has a Railway domain or TCP proxy. The Gateway is reachable
-only on Railway's private network, and only the Tailscale service forwards to it.
+The service has no Railway domain or TCP proxy. The Gateway listens only on
+loopback, so nothing on Railway's private network can reach it either; the only
+way in is Tailscale Serve, which OpenClaw configures and owns.
 
 ## The OpenClaw service
 
-The image is the official OpenClaw image plus a few small files and the tools
-skills need:
+The image is the official OpenClaw image plus a few small files, Tailscale's two
+binaries, and the tools skills need:
 
 - `scripts/entrypoint.sh` (mostly comments and error messages) runs as root,
   validates the environment, prepares the volume, writes
-  `config/openclaw.seed.json` and seeds Homebrew on first boot only, and `exec`s
-  into the stock startup as the unprivileged `node` user.
+  `config/openclaw.seed.json` and seeds Homebrew on first boot only, starts the
+  sidecar, logs Tailscale in on first boot, and `exec`s into the stock startup
+  as the unprivileged `node` user.
+- `scripts/sidecar.mjs` runs `tailscaled` and relays Railway's health check
+  (below).
+- `tailscale` and `tailscaled`, copied from the pinned
+  `tailscale/tailscale:v1.102.5` image in a multi-stage build. Dependabot tracks
+  that `FROM` line along with OpenClaw's.
 - `scripts/as-node.sh`, plus `openclaw` and `brew` wrappers built on it, run
   commands typed in a root `railway ssh` shell as `node`, so operator commands
   cannot leave root-owned state.
 - `config/openclaw.seed.json` is the baseline config (below).
 - A pinned baseline of skill tools (`gh`, `gog`, Claude Code, Codex, `jq`,
-  `tmux`), ImageMagick for HEIC photos, and a Homebrew seed, with `HOME` on the volume so logins and updates
-  persist. See [TOOLS.md](TOOLS.md).
+  `tmux`), ImageMagick for HEIC photos, and a Homebrew seed, with `HOME` on the
+  volume so logins and updates persist. See [TOOLS.md](TOOLS.md).
 
-After the privilege drop, the process tree is exactly the stock image:
+After the privilege drop, everything runs as `node` (uid 1000):
 
 ```text
-PID 1  tini -s --                 (signal forwarding, zombie reaping; uid 1000)
-       └─ node docker-entrypoint.mjs   runs `openclaw doctor --fix` (state migrations)
-          └─ execve → openclaw-gateway  the only long-running process
+PID 1  tini -s --                      signal forwarding, zombie reaping
+       └─ node docker-entrypoint.mjs    runs `openclaw doctor --fix` (state migrations)
+          └─ execve → openclaw-gateway   the Gateway
+       node sidecar.mjs                  started by the entrypoint before the exec
+       └─ tailscaled                     userspace networking, state on /data
 ```
 
-There is no setup web server, reverse proxy, or process supervisor. Railway is
-the supervisor.
+There is no setup web server, reverse proxy, or general process supervisor.
+Railway restarts the container; the sidecar only makes sure a dead `tailscaled`
+stops the container so that happens.
 
 ### Startup sequence
 
 1. Entrypoint (root): refuse to start unless `OPENCLAW_GATEWAY_TOKEN` is set and
-   ≥ 32 characters, `OPENCLAW_PUBLIC_ORIGIN` is a `https://….ts.net` address,
-   and `PORT` (if set) equals `8080`. Warn if `/data` is not a
-   mount.
-2. Create `/data/.openclaw` (mode 700) owned by `node`; hand back to `node` any
-   file under it owned by someone else.
+   ≥ 32 characters, and `PORT` (if set) differs from the Gateway's loopback
+   port, 18789. Warn if `/data` is not a mount.
+2. Create `/data/.openclaw`, `/data/home`, and `/data/tailscale` (mode 700)
+   owned by `node`; hand back to `node` any file under them owned by someone
+   else.
 3. If `openclaw.json` does not exist, copy the seed. Existing config is never
-   touched; OpenClaw's own clobber protection is never triggered.
-4. `exec setpriv` → `node` user → `tini` → OpenClaw's `docker-entrypoint.mjs`,
+   rewritten; OpenClaw's own clobber protection is never triggered. A config from
+   the previous two-service layout (LAN bind, `gateway.publicOrigin`, a
+   device-pair `publicUrl`) is refused with the four migration commands; see
+   [UPGRADING.md](UPGRADING.md).
+4. Start `scripts/sidecar.mjs` as `node`, without `TS_AUTHKEY` or
+   `OPENCLAW_GATEWAY_TOKEN` in its environment. It starts `tailscaled`.
+5. Wait for `tailscaled` to load its state. If it isn't logged in (first boot,
+   or the node was removed from the tailnet), log in with `TS_AUTHKEY`, passed
+   through a mode-600 temporary file (never on the command line, where `ps`
+   would show it), then delete the file. If it is already logged in, the key is
+   not used. Then unset `TS_AUTHKEY`.
+6. `exec setpriv` → `node` user → `tini` → OpenClaw's `docker-entrypoint.mjs`,
    which runs Doctor migrations under exclusive state ownership, then `execve`s
-   the Gateway.
-5. `/startupz` turns 200 when the Gateway admits traffic (≈15 s on an empty
-   volume in local tests).
+   the Gateway with `--bind loopback --tailscale serve --auth token`.
+7. The Gateway claims Tailscale Serve (HTTPS on 443 of the node's MagicDNS name,
+   proxied to a dedicated ephemeral loopback listener). Startup succeeds only
+   once the claim is active, and the claim is released when the Gateway stops.
+   `/startupz` then turns 200.
+
+The Gateway fails closed when Tailscale is logged out (`[tailscale] serve
+failed: Logged out.`, exit 1), which is why the entrypoint logs in first.
 
 ### Why a seed config
 
@@ -87,99 +113,125 @@ The seed contains only infrastructure settings:
 | Key | Value | Why |
 | --- | --- | --- |
 | `gateway.mode` | `local` | Required to start. |
-| `gateway.bind` | `lan` | Informs Doctor and diagnostics; the `CMD` flag is authoritative. |
+| `gateway.bind` | `loopback` | Required by `gateway.tailscale.mode: serve` (OpenClaw rejects anything else: "gateway.bind must resolve to loopback when gateway.tailscale.mode=serve"). The `CMD` flag pins it too. |
+| `gateway.tailscale.mode` | `serve` | OpenClaw runs Tailscale Serve itself. Separate CLI commands such as `openclaw qr` read this from the file, so it matters even though the `CMD` flag also sets it. |
 | `gateway.auth` | token, env SecretRef `OPENCLAW_GATEWAY_TOKEN` | Token never written to disk. |
-| `gateway.auth.rateLimit` | 10 failures / 60 s, 5-minute lockout | OpenClaw's audit warns when a non-loopback Gateway has none. Every tailnet client shares the Tailscale service's IP, so a lockout applies to all of them. |
-| `gateway.tailscale.mode` | `off` | OpenClaw's managed Tailscale needs a local `tailscale` daemon; this topology uses a separate service. |
+| `gateway.auth.rateLimit` | 10 failures / 60 s, 5-minute lockout | Failed-auth limiting per client and scope. |
 | `gateway.terminal.enabled` | `false` | The operator terminal is a host shell inheriting the Gateway environment (including secrets). Enable it deliberately if you want it. |
-| `gateway.nodes.pairing.sshVerify` | `false` | Disables SSH-verified node auto-approval; every device is approved by hand. |
-| `plugins.entries.device-pair.config.publicUrl` | `${OPENCLAW_PUBLIC_ORIGIN}` | Mobile pairing codes (`openclaw qr`) advertise the tailnet `wss://` address. Without it they advertise the container's private `ws://` address, which phones can't reach and which OpenClaw downgrades to limited access. |
+| `gateway.nodes.pairing.sshVerify` | `false` | Disables SSH-verified node auto-approval; every node is approved by hand. |
 
-`gateway.publicOrigin` is `${OPENCLAW_PUBLIC_ORIGIN}`, resolved by OpenClaw from
-the environment. It is the Gateway's browser-origin allowlist; without it,
-`openclaw security audit` reports a critical finding for any non-loopback bind.
-OpenClaw refuses to start when the referenced variable is missing, so the
-entrypoint checks it first. Agent-level
-policy (tools, channel allowlists) is the operator's choice; see
+There is no `gateway.publicOrigin` and no device-pair `publicUrl`: with managed
+Serve, OpenClaw knows its own address. Browser loads from the `.ts.net` name are
+private same-origin requests, and `openclaw qr` advertises the Serve URL.
+Agent-level policy (tools, channel allowlists) is the operator's choice; see
 [SECURITY.md](SECURITY.md).
+
+## The sidecar
+
+`scripts/sidecar.mjs` is about 40 lines with two jobs:
+
+1. **Run `tailscaled`.** Userspace networking (Railway grants no TUN device or
+   `NET_ADMIN`), as `node`, state in `/data/tailscale`, socket at the CLI's
+   default path so `tailscale` and OpenClaw need no flags. If `tailscaled` exits,
+   the sidecar sends SIGTERM to PID 1 (`tini`), the Gateway shuts down cleanly,
+   and the container stops, so Railway restarts Tailscale and the Gateway
+   together (≈2 s, verified).
+2. **Relay the deploy health check.** Railway's check comes in over the
+   container's network and can't reach a loopback-only Gateway, and OpenClaw has
+   no separate probe port. The relay listens on `PORT` (8080) and forwards only
+   `GET`/`HEAD` of `/healthz`, `/readyz`, and `/startupz`. Everything else is a
+   404, including other methods on those paths, `/healthz/../v1/models`, and
+   percent-encoded variants (verified). A general port forward would make every
+   caller on Railway's private network look like a local client to the Gateway.
+
+If the sidecar process itself dies, the relay stops and nothing restarts the
+container. The Gateway keeps serving; Railway only probes at deploy time, so the
+next deploy is where it would show.
 
 ## Private access: options considered
 
 | Option | Verdict | Why |
 | --- | --- | --- |
-| **Tailscale service, Serve in raw TCP mode** (chosen) | ✅ | Official image, userspace networking (no `NET_ADMIN`, no TUN), separate service. Forwards bytes without adding headers, so the Gateway sees a header-free private peer and needs no `trustedProxies`. TLS on :443 uses the tailnet's real certificate, so `wss://` works with normal system trust. |
-| Tailscale Serve as an HTTP reverse proxy (`https:443 → http://openclaw…`) | ❌ | Adds `X-Forwarded-*` and `Tailscale-User-*` headers. The Gateway rejects those unless the sender is in `gateway.trustedProxies`, and the Tailscale container's Railway private IP changes with each deploy, so the trust range would have to cover the whole private network. Tailscale identity auth (`allowTailscale`) also needs `tailscale whois` on the Gateway host. This reproduces the original failure. |
-| `tailscaled` inside the OpenClaw container (`gateway.bind: tailnet` or `gateway.tailscale.mode: serve`) | ❌ | Two long-running processes in one container (needs a supervisor), and kernel networking needs `NET_ADMIN`/TUN, which Railway doesn't grant. In userspace mode there is no tailnet interface for the Gateway to bind. |
+| **`tailscaled` in the OpenClaw container, `gateway.tailscale.mode: serve`** (chosen) | ✅ | OpenClaw's supported setup. HTTPS on the node's MagicDNS name with no configuration; tailnet identity sign-in; pairing codes and browser origins correct without an address variable; the Gateway is loopback-only. Costs: a second long-running process (`tailscaled`) and a health relay, both in the sidecar. |
+| Separate Tailscale service, Serve in raw TCP mode (the previous layout) | Replaced | Worked with no forwarded headers to trust, but the Gateway had to bind to Railway's private network, users had to enter the tailnet address by hand (and fix it when Tailscale renamed the node `openclaw-1`), and tailnet identity sign-in was unavailable. Two services and two volumes. |
+| Separate Tailscale service, Serve as an HTTP reverse proxy | ❌ | Adds `X-Forwarded-*` and `Tailscale-User-*` headers from a peer whose Railway private IP changes each deploy, so `trustedProxies` would have to cover the whole private network. |
+| `gateway.bind: tailnet` | ❌ | Needs a tailnet interface; in userspace mode there is none. No HTTPS either. |
 | Tailscale subnet router for Railway's private network | ❌ | Exposes every service in the environment to the tailnet, and `*.railway.internal` names don't resolve from tailnet clients. |
-| SSH tunnel through Railway SSH (`ssh -L` via `ssh.railway.com`) | Fallback | No extra service, but every client needs a Railway account, a registered SSH key, and a running tunnel. Kept as a break-glass path; see [DESKTOP.md](DESKTOP.md#fallback-railway-ssh-tunnel). |
-| Railway public domain + token (the previous template) | ❌ | Public exposure of the Gateway. |
+| SSH tunnel through Railway SSH (`ssh -L` via `ssh.railway.com`) | Fallback | No extra setup, but every client needs a Railway account, a registered SSH key, and a running tunnel. Kept as a break-glass path; see [DESKTOP.md](DESKTOP.md#fallback-railway-ssh-tunnel). |
+| Railway public domain + token (the original template) | ❌ | Public exposure of the Gateway. |
+
+This replaces the original brief's requirement of Tailscale as a separate
+service; the change was approved on 2026-10-08 (see
+[ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md)).
 
 ## Why the proxy-attribution error cannot recur
 
-The error came from `src/gateway/ingress-attribution.ts`. In 2026.9.8 (read from
-the shipped `dist/ingress-attribution-*.mjs`), every request is classified as:
+The original error came from `src/gateway/ingress-attribution.ts`: a peer that
+sends forwarded or `Tailscale-*` headers without being in
+`gateway.trustedProxies` is rejected with *"Proxy client attribution is
+required…"*.
 
-1. **direct-local**: loopback peer, no `X-Forwarded-*`/`Forwarded`/`X-Real-IP`
-   and no `Tailscale-*` headers.
-2. **trusted-proxy**: peer address in `gateway.trustedProxies`; the client IP
-   is taken from the forwarded headers.
-3. **unattributable proxy** → rejected with *"Proxy client attribution is
-   required…"*: any peer that sends forwarded or Tailscale headers but is not a
-   trusted proxy.
-4. **direct-remote**: a non-loopback peer with none of those headers,
-   attributed to its socket address.
+In this layout no proxy ever talks to the ordinary Gateway listener:
 
-The old wrapper's in-container proxy sent forwarded headers from loopback, so its
-requests fell into case 3. Tailscale Serve's `TCPForward` (verified in Tailscale
-v1.102.5 `ipn/ipnlocal/serve.go`) copies bytes and sends no PROXY protocol
-header. The Gateway therefore sees case 4: a private-network peer with no
-forwarded claims at all. `gateway.trustedProxies` stays empty; nothing is
-trusted that could be spoofed.
+- **Tailnet traffic** arrives through OpenClaw-managed Serve, which proxies to a
+  dedicated ephemeral loopback listener that OpenClaw creates for it. OpenClaw
+  knows that listener's provenance, so Tailscale's forwarded headers are expected
+  there, and identity headers are verified with `tailscale whois` before they
+  count. Startup fails closed rather than sharing that listener with anything
+  else.
+- **The ordinary listener** (`127.0.0.1:18789`) is reachable only from inside
+  the container. Forwarded or Tailscale headers sent to it are rejected with 403
+  even when the request carries a valid token (verified).
+- **The health relay** forwards only the three unauthenticated probe paths and
+  sends no forwarded headers.
 
-The image tests reproduce both sides from a second container on a Docker
-network:
+`gateway.trustedProxies` stays empty. Don't add `127.0.0.1` to it: that would let
+every process in the container claim to be a proxy.
 
-| Request from a non-loopback peer | Result |
+The image tests check the ordinary listener from inside the container:
+
+| Request to `127.0.0.1:18789` | Result |
 | --- | --- |
 | no token / wrong token | 401 |
-| token, no proxy headers (what Tailscale TCP forwarding presents) | **200** |
-| token + `X-Forwarded-For` | **403** "Proxy client attribution is required" |
-| token + `Tailscale-User-Login` | 403 |
-
-What this costs: the Gateway attributes every tailnet client to the Tailscale
-service's private IP, so failed-auth rate limiting is shared across your tailnet
-devices, and logs show that IP rather than the device's tailnet address. Device
-identity, pairing, and token checks are unaffected.
+| token, no proxy headers | **200** |
+| `Tailscale-User-Login` + forwarded headers, no token | **403** "Proxy client attribution is required" |
+| token + `X-Forwarded-For` | **403** |
 
 ## Authentication model
 
-Two independent layers, both enforced by the Gateway:
+Enforced by the Gateway:
 
-1. **Shared token**: every WebSocket `connect` and authenticated HTTP request
-   must present `OPENCLAW_GATEWAY_TOKEN`. `--auth token` is pinned in the `CMD`.
-2. **Device pairing**: each client (browser profile, Mac app, phone, node host)
-   signs the connect challenge with its own Ed25519 key. A new device from a
-   non-loopback address stays pending until an operator runs
-   `openclaw devices approve <requestId>`. Only direct loopback connections
-   (the CLI inside the container) are auto-approved. A connection without
-   device identity gets no operator scopes. Verified: a remote client using only
-   the token can call `health` but is refused `config.get` (`missing scope:
-   operator.read`).
+1. **Tailnet identity** (browsers through Serve): with `gateway.tailscale.mode:
+   serve`, `gateway.auth.allowTailscale` defaults to `true`. A browser that
+   reaches the Serve URL signs in to the Control UI with its Tailscale identity:
+   no token and no device approval (verified; no pairing entry is created). Only
+   the Control UI WebSocket and avatar reads accept this; HTTP API endpoints
+   (`/v1/*`, `/tools/invoke`, …) always require the token.
+2. **Shared token**: every other WebSocket `connect` and authenticated HTTP
+   request must present `OPENCLAW_GATEWAY_TOKEN`. `--auth token` is pinned in the
+   `CMD`.
+3. **Device pairing** for node-role connections (the Mac app's node, node hosts,
+   phones): each signs the connect challenge with its own Ed25519 key and stays
+   pending until an operator runs `openclaw devices approve <requestId>`.
+   Tailnet identity does not bypass node pairing.
 
-Tailscale adds a third, network-level layer: only tailnet devices your access
-policy allows can reach the service at all.
+Tailscale is the network layer: only tailnet devices your access policy lets
+reach the node on 443 can connect at all, and with identity sign-in on, that
+policy is also who can open the dashboard. See
+[SECURITY.md](SECURITY.md#tailnet-identity-sign-in).
 
 ## Health, restarts, and what Railway owns
 
 | Concern | Owner | Mechanism |
 | --- | --- | --- |
-| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), timeout 600 s (300 s from the template). 200 once the Gateway admits traffic; ignores channel health. |
-| Restart on exit | Railway | `restartPolicyType: ALWAYS`. Required: in external-supervisor mode a config change that needs a restart makes the Gateway exit 0 ("full process restart (supervisor restart)"), observed after onboarding. |
-| Graceful stop | Railway + container | Railway sends SIGTERM, then SIGKILL after `drainingSeconds: 330` (OpenClaw's own stop budget). `tini` forwards the signal; the Gateway drains and exits 0 (≈60 ms when idle). |
-| Crash recovery | Railway | A killed Gateway ends `tini`, the container exits non-zero, Railway restarts it. |
+| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), relayed by the sidecar to the loopback Gateway; timeout 600 s (300 s from the template). 200 once the Gateway admits traffic, which includes Serve being up; ignores channel health. *(Through the relay on Railway: not yet verified live.)* |
+| Restart on exit | Railway | `restartPolicyType: ALWAYS`. Required: in external-supervisor mode a config change that needs a restart makes the Gateway exit 0 ("full process restart (supervisor restart)"), and a dead `tailscaled` also stops the container with exit 0. |
+| Graceful stop | Railway + container | Railway sends SIGTERM, then SIGKILL after `drainingSeconds: 330` (OpenClaw's own stop budget). `tini` forwards the signal; the Gateway drains, releases its Serve claim, and exits 0 (≈60 ms when idle). |
+| Crash recovery | Railway | A killed Gateway ends `tini`, the container exits non-zero, Railway restarts it. A killed `tailscaled` makes the sidecar stop the container. |
+| Tailscale login | Container | Node key and certificates on `/data/tailscale`; `TS_AUTHKEY` is used only when the node is logged out. Restarts reuse the saved login (verified). |
 | State migrations | Container | OpenClaw's entrypoint runs `doctor --fix` before every Gateway start. |
 | Single writer | Railway + OpenClaw | One replica. Railway never runs two deployments with the same volume; OpenClaw 2026.9.8 also enforces single-owner Gateway startup. |
-| Post-deploy liveness | **Nobody, by default** | Railway checks health only during a deploy. A Gateway that is running but wedged is not restarted automatically. Monitor `/readyz` from a tailnet device if you need this. |
+| Post-deploy liveness | **Nobody, by default** | Railway checks health only during a deploy. A Gateway that is running but wedged is not restarted automatically. Monitor `https://openclaw.<tailnet>.ts.net/readyz` from a tailnet device if you need this. |
 
 Because only one deployment may hold the volume, every redeploy has a short
 outage: Railway stops the old container before starting the new one. A failed
@@ -188,41 +240,39 @@ was chosen over `/readyz` for that reason: with an invalid Telegram token,
 `/readyz` returns 503 while `/startupz` returns 200 (observed), and a `/readyz`
 gate would fail every deploy until the channel was fixed.
 
-## The Tailscale service
+## Tailscale in the container
 
-The official image with `tailscale/serve.json` baked in (containerboot reads Serve
-config only from a file, and Railway can't mount files into a service). It runs as
-root inside its container, the image default, with no added capabilities. It
-listens on the tailnet (443, 18789) and on `[::]:8080` for Railway's health check,
-and has no Railway domain.
-
-- Identity persists on its volume (`TS_STATE_DIR=/var/lib/tailscale`), and
-  `TS_AUTH_ONCE=true` skips re-login when that state exists. Redeploys keep the
-  same node and MagicDNS name.
-- `/healthz` is 200 once the node has a tailnet IP. It doesn't check the
-  Gateway; the forward is lazy, so the two services can start in any order.
-- `openclaw.railway.internal:8080` is hard-coded in `serve.json`, so the Gateway
-  service must be named `openclaw`.
-- Both services listen on 8080, Railway's default `PORT`, so neither needs a
-  `PORT` variable. Railway templates drop literal variable values, so this keeps
-  the published template free of hand-entered defaults.
-- The service builds with `tailscale/` as its root directory.
-- `TS_DEBUG_MTU=1236` lowers the tunnel MTU to fit Railway's 1316-byte network
-  MTU (1316 − 80 bytes of WireGuard overhead). Without it, full-size packets were
-  lost on the way out of Railway, so TLS handshakes took 0.6–1.7 s and transfers
-  ran near 10 KB/s, while small requests looked fine.
+- **Identity persists** on the volume (`TS_STATE_DIR=/data/tailscale`):
+  redeploys keep the same node and MagicDNS name. `TS_HOSTNAME=openclaw` sets the
+  name on first login; if your tailnet already has a machine named `openclaw`,
+  Tailscale names this one `openclaw-1`. Nothing in the template depends on the
+  name.
+- **HTTPS certificates must be enabled** for the tailnet. There is no plaintext
+  fallback port. The first HTTPS request after a node's first login took ≈15.6 s
+  while Tailscale issued the certificate (locally); later requests ≈16 ms. The
+  certificate is stored with the node state.
+- **`TS_DEBUG_MTU=1236`** lowers the tunnel MTU to fit Railway's 1316-byte
+  network MTU (1316 − 80 bytes of WireGuard/UDP/IPv6 overhead). Without it,
+  full-size packets were lost on the way out of Railway, so TLS handshakes took
+  0.6–1.7 s and transfers ran near 10 KB/s, while small requests looked fine.
+  *(Measured with the previous layout; not yet re-verified on Railway with
+  Tailscale in this container.)*
+- **Peer API.** In userspace mode `tailscaled` listens on `0.0.0.0:<random>` TCP
+  for Tailscale's peer API (Taildrop and similar). It rejects anything that isn't
+  an authenticated tailnet peer (`peerapi: unknown peer`); the previous separate
+  Tailscale container had the same listener.
+- `tailscale` works in a `railway ssh` shell without flags (default socket path);
+  run it as `node` (`as-node tailscale status`) to match the daemon's owner.
 
 ## Requirements and limits
 
-- **Railway environment created after 2025-10-16.** OpenClaw can bind only IPv4
-  (`lan` = `0.0.0.0`; `custom` takes one IPv4 address). Older ("legacy") Railway
-  environments resolve `*.railway.internal` to IPv6 only, and the Tailscale
-  forward would not connect. There is no OpenClaw-side workaround.
+- **Tailnet MagicDNS and HTTPS certificates** enabled.
 - **One Gateway instance.** OpenClaw does not cluster, and Railway volumes can't
   be shared between replicas.
-- **Image size.** The official image is ≈5 GB uncompressed. The first build on
-  Railway pulls it; later builds reuse cached layers.
-- **Resources.** Idle memory is ≈0.9 GB in local tests. Plan on 2 GB memory and
-  1 vCPU minimum; more for browser automation or heavy agent fleets. Start with a
-  5 GB volume and watch `/data` growth (media, SQLite, workspace, and tools you
-  install: Homebrew dependencies alone can take a few GB).
+- **Image size.** ≈6 GB uncompressed (the official image is ≈5 GB). The first
+  build on Railway pulls it; later builds reuse cached layers.
+- **Resources.** Idle memory is ≈0.9 GB for the Gateway in local tests, plus
+  `tailscaled` and the sidecar. Plan on 2 GB memory and 1 vCPU minimum; more for
+  browser automation or heavy agent fleets. Start with a 5 GB volume and watch
+  `/data` growth (media, SQLite, workspace, and tools you install: Homebrew
+  dependencies alone can take a few GB).

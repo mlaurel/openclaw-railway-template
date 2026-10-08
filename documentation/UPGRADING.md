@@ -29,15 +29,20 @@ docker buildx imagetools inspect "ghcr.io/openclaw/openclaw:$version" --format '
 # edit Dockerfile: FROM ghcr.io/openclaw/openclaw:<version>@sha256:<digest>
 ```
 
-Nothing else references the version.
+Nothing else references the OpenClaw version. (The Tailscale binaries have
+their own `FROM … AS tailscale` line; see [Tailscale upgrades](#tailscale-upgrades).)
 
 ## 3–4. Build and validate
 
-CI (`.github/workflows/ci.yml`) builds both images and runs `tests/image.test.sh`
-against them on every PR. Among other things, it checks that `openclaw --version`
+CI (`.github/workflows/ci.yml`) builds the image and runs `tests/image.test.sh`
+against it on every PR. Among other things, it checks that `openclaw --version`
 inside the built image equals the `FROM` tag, that a fresh volume boots, that an
-existing volume survives a restart, and that auth, attribution, pairing, and the
-security audit still behave. Don't merge on red.
+existing volume survives a restart, and that auth, proxy attribution, the health
+relay, and the security audit still behave. With the optional
+`TAILSCALE_TEST_AUTHKEY` repository secret (a reusable, ephemeral auth key), it
+also logs a node in to your tailnet and checks Tailscale Serve end to end;
+Dependabot pull requests don't receive secrets, so they run the core tier only.
+Don't merge on red.
 
 To test an upgrade against a copy of real state, restore an OpenClaw backup
 archive (step 5) into a local Docker volume and start the new image on it.
@@ -87,6 +92,8 @@ railway ssh --service openclaw -- openclaw security audit --deep
 
 - **Desktop:** Mac app → Connection → **Test**. If the dashboard reports a
   protocol mismatch, hard-refresh or clear its site data.
+- **Tailscale:** the deploy log shows `[tailscale] serve enabled: https://…/`
+  again, with no new `logged in to Tailscale` line.
 - **Channels:** send a Telegram DM; check `openclaw status` shows Telegram OK.
 
 ## Rolling back
@@ -110,7 +117,8 @@ something by hand. **(live-unverified: the restore flow follows Railway's backup
 docs.)**
 
 Tools you installed or updated on the volume (`~/.local`, Homebrew in
-`/data/linuxbrew`) are part of that volume state: an image rollback leaves them
+`/data/linuxbrew`) and Tailscale's node state (`/data/tailscale`) are part of
+that volume state: an image rollback leaves them
 as they are, and a volume restore returns them to the backup's versions.
 
 Railway's **Rollback** button (redeploy a previous image) is only safe for
@@ -140,9 +148,57 @@ baseline itself:
 
 ## Tailscale upgrades
 
-Dependabot also proposes `tailscale/tailscale` tags for `tailscale/Dockerfile`.
-CI re-checks `serve.json` against the new release's types. Node state carries
-across versions; roll back by reverting the commit.
+Dependabot proposes new `tailscale/tailscale` tags for the `FROM … AS tailscale`
+line in `Dockerfile` (tag and digest together). The image copies only the
+`tailscale` and `tailscaled` binaries from it, and CI checks that
+`tailscale version` matches the tag. Node state on the volume carries across
+versions; roll back by reverting the commit.
+
+## Migrating from the two-service layout
+
+Deployments created before Tailscale moved into the `openclaw` container had a
+separate `tailscale` service and volume, raw TCP forwarding, and
+`OPENCLAW_PUBLIC_ORIGIN`. The new image refuses to start on such a volume, with
+a message naming these steps. **(live-unverified:** the steps below were checked
+locally against an old-layout volume; the live migration has not been run yet.)
+
+1. **Migrate the config** while the old deployment is still running, from a
+   shell on its volume. Order matters: OpenClaw rejects `tailscale.mode serve`
+   while `bind` is `lan`.
+
+   ```bash
+   railway ssh --service openclaw -- openclaw config set gateway.bind loopback
+   railway ssh --service openclaw -- openclaw config set gateway.tailscale.mode serve
+   railway ssh --service openclaw -- openclaw config unset gateway.publicOrigin
+   railway ssh --service openclaw -- openclaw config unset plugins.entries.device-pair
+   ```
+
+   OpenClaw applies them at the next start (it prints "Restart the gateway to
+   apply"), which should be the new image's. Do steps 1–4 in one sitting: if
+   the old container restarts in between, it fails to start, because the old
+   image has no Tailscale daemon for `serve` mode. Deploying the new image
+   fixes that.
+2. **Free the machine name.** In the Tailscale admin console, remove the old
+   `openclaw` machine (the `tailscale` service's node). Otherwise the new
+   container registers as `openclaw-1` and clients configured for
+   `openclaw.<tailnet>.ts.net` stop connecting. This takes the old path offline.
+3. **Set the auth key** on the `openclaw` service (a new key, not the one the
+   `tailscale` service used):
+
+   ```bash
+   pbpaste | tr -d '\n' | railway variable set TS_AUTHKEY --stdin --service openclaw --skip-deploys
+   ```
+
+4. **Deploy** the new image (merge, or `railway redeploy --service openclaw --yes`
+   if `main` already has it). Expect `logged in to Tailscale as openclaw` and
+   `[tailscale] serve enabled: https://openclaw.<tailnet>.ts.net/`.
+5. **Remove the old service.** With the new `.railway/railway.ts`,
+   `railway config plan` shows the `tailscale` service and `tailscale-state`
+   volume as deletions. Read the plan, then `railway config apply`. Delete
+   `OPENCLAW_PUBLIC_ORIGIN` from the `openclaw` service too (the plan lists it).
+6. **Tidy up.** Tag the new machine or disable its key expiry. The Mac app keeps
+   its URL and token; device pairings live on the `openclaw` volume and carry
+   over.
 
 ## Migrating from the previous deployment
 

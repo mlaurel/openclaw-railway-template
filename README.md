@@ -7,40 +7,49 @@ reachable only through Tailscale.
 
 - **OpenClaw 2026.9.8**, the official image pinned by digest. Upgrading OpenClaw
   means changing one `FROM` line.
-- **The Gateway is the process.** No setup server, reverse proxy, or supervisor.
-  A short entrypoint prepares the volume and drops root before OpenClaw's own
-  startup runs.
-- **Private by default.** No Railway domain. A separate Tailscale service
-  forwards raw TCP from your tailnet to the Gateway over Railway's private
-  network, so no forwarded headers exist to trust or spoof, and OpenClaw's
-  proxy-attribution check stays fully on.
+- **The Gateway is the main process.** No setup server or reverse proxy. A
+  short entrypoint prepares the volume, logs Tailscale in on first boot, and
+  drops root before OpenClaw's own startup runs. A small sidecar runs
+  `tailscaled` and relays Railway's health check.
+- **Private by default.** No Railway domain. Tailscale runs in the same
+  container, and OpenClaw manages Tailscale Serve itself: the Gateway listens
+  only on loopback, Serve publishes it at `https://openclaw.<tailnet>.ts.net`,
+  and browsers on your tailnet sign in with their Tailscale identity. Nothing
+  else in the Railway project can reach it.
+- **One service, one variable.** The template asks only for a Tailscale auth
+  key; the Gateway token is generated.
 - **All state on one volume** at `/data`: OpenClaw's state in `/data/.openclaw`
-  (migrated by OpenClaw's own Doctor on every start), plus the home directory
-  and Homebrew, so tool logins and updates survive redeploys.
+  (migrated by OpenClaw's own Doctor on every start), Tailscale's node state,
+  the home directory, and Homebrew, so the machine identity, tool logins, and
+  updates survive redeploys.
 - **Tools for skills included.** `gh`, `gog`, Claude Code, Codex, `jq`, `tmux`,
   and ImageMagick (for iPhone HEIC photos) ship as a pinned baseline; Homebrew
   and `npm install -g` add or update tools on the volume.
 
 ```mermaid
 flowchart LR
-    clients["Mac app, browser, phone"]
+    clients["Mac app, browser, phone<br/>(on your tailnet)"]
+    healthcheck["Railway deploy<br/>health check"]
 
-    subgraph railway["Railway project (private network only)"]
-        tailscale["tailscale service<br/>raw TCP :443 and :18789"]
-        openclaw["openclaw service<br/>Gateway :8080"]
-        volume[("/data volume")]
+    subgraph service["openclaw service (Railway, no public domain)"]
+        tailscaled["tailscaled<br/>Serve :443"]
+        relay["health relay :8080<br/>/healthz /readyz /startupz"]
+        gateway["OpenClaw Gateway<br/>127.0.0.1:18789"]
     end
+    volume[("/data volume")]
 
-    clients -- "Tailscale (WireGuard)" --> tailscale
-    tailscale -- "openclaw.railway.internal:8080" --> openclaw
-    openclaw --> volume
+    clients -- "Tailscale (WireGuard), HTTPS" --> tailscaled
+    tailscaled -- "OpenClaw-managed Serve" --> gateway
+    healthcheck --> relay --> gateway
+    gateway --> volume
+    tailscaled --> volume
 ```
 
 ## Deploy
 
 **[QUICKSTART.md](documentation/QUICKSTART.md)**: deploy the Railway template,
-give it your tailnet address and a Tailscale auth key, then onboard a model
-provider and pair the Mac app. About 15 minutes.
+give it a Tailscale auth key, then onboard a model provider and pair the Mac
+app. About 15 minutes.
 
 [DEPLOYMENT.md](documentation/DEPLOYMENT.md) does the same from your own fork
 with Railway Infrastructure as Code (`.railway/railway.ts`).
@@ -65,18 +74,17 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 
 | Path | Purpose |
 | --- | --- |
-| `Dockerfile` | OpenClaw image: official base, entrypoint, seed config, skill tools, Homebrew seed |
-| `scripts/entrypoint.sh` | Environment checks, volume preparation, first-boot seeding, privilege drop |
+| `Dockerfile` | OpenClaw image: official base, Tailscale binaries, entrypoint, seed config, skill tools, Homebrew seed |
+| `scripts/entrypoint.sh` | Environment checks, volume preparation, first-boot seeding, Tailscale login, privilege drop |
+| `scripts/sidecar.mjs` | Runs `tailscaled` (stops the container if it exits) and relays Railway's health check to the loopback Gateway |
 | `scripts/as-node.sh` | `as-node <command>`: run a command as `node` from a root `railway ssh` shell |
 | `scripts/openclaw-as-node.sh` | Runs the OpenClaw CLI through `as-node` |
 | `scripts/brew-as-node.sh` | Runs Homebrew through `as-node` (Homebrew refuses root) |
 | `config/openclaw.seed.json` | Baseline config, written on first boot only |
 | `tools/` | Pinned npm tools for skills (Claude Code); Dependabot proposes updates |
-| `tailscale/Dockerfile` | Official Tailscale image and Serve config |
-| `tailscale/serve.json` | Raw TCP forwards to `openclaw.railway.internal:8080` |
-| `.railway/railway.ts` | Railway Infrastructure as Code: two services, two volumes |
-| `.env.example` | Runtime variables for both services (documentation only) |
-| `tests/` | Image integration tests, IaC tests, Serve config check |
+| `.railway/railway.ts` | Railway Infrastructure as Code: one service, one volume |
+| `.env.example` | Runtime variables (documentation only) |
+| `tests/` | Image integration tests, IaC tests |
 | `documentation/` | Guides listed above |
 | `.github/` | CI and Dependabot |
 
@@ -85,9 +93,15 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 ```bash
 npm ci
 npm run typecheck && npm run test:railway-config
-sh tests/serve-config.test.sh   # needs Docker
-npm run test:image              # needs Docker; builds and exercises both images
+npm run test:image              # needs Docker; builds and exercises the image
 ```
+
+The image tests need no tailnet: they run the Gateway with Tailscale skipped and
+check the relay, authentication, persistence, and failure handling. To also log
+a real node in to your tailnet and check Tailscale Serve end to end, set
+`TAILSCALE_TEST_AUTHKEY` to a reusable, ephemeral auth key
+(`TAILSCALE_TEST_AUTHKEY=tskey-… npm run test:image`). CI does the same when the
+repository has a secret of that name.
 
 ## License
 

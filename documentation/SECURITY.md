@@ -16,27 +16,60 @@ that; agent policy does.
 
 | Control | How | Evidence |
 | --- | --- | --- |
-| No public exposure | No Railway domain or TCP proxy on either service; Tailscale Serve has no Funnel. | `tests/railway-config.test.ts`, `tests/serve-config.test.sh` |
-| Tailnet-only access | Gateway reachable only on Railway's private network; only the Tailscale service forwards to it; tailnet policy limits who reaches the Tailscale node. | [TAILSCALE.md](TAILSCALE.md) |
-| Gateway authentication | `--auth token` pinned in `CMD`; token ≥ 32 chars enforced by the entrypoint; failed-auth rate limiting in the seed. | `tests/image.test.sh` (401 without/with a wrong token) |
-| No proxy-trust shortcuts | `gateway.trustedProxies` empty; no `allowRealIpFallback`, no Host-header origin fallback, no `auth.mode: none`, no `allowTailscale`. Forwarded headers from any peer are rejected. | `tests/image.test.sh` (403 with `X-Forwarded-For` or `Tailscale-User-Login`) |
-| No auto-trusted devices | Remote devices must be approved; SSH-verified node auto-approval disabled; no `autoApproveCidrs`. | `tests/image.test.sh` (remote node stays pending) |
-| Least privilege | Gateway and all its children run as uid 1000; root is used only by the entrypoint to prepare the volume, then dropped with `setpriv`. No added Linux capabilities on either service. The operator terminal (host shell) is off. | `tests/image.test.sh` (every process uid 1000) |
-| Secrets stay out of images and the repo | Dockerfiles declare no `ARG`; secrets are Railway variables (seal them); config refers to them as env SecretRefs; onboarding stores references, not values. | `tests/image.test.sh` (environment and history scans); manual check that no secret value appears under `/data/.openclaw` |
-| Secrets stay out of logs and `ps` | The entrypoint never prints the token; the token is never a command-line argument. | `tests/image.test.sh` (token absent from process arguments) |
+| No public exposure | No Railway domain or TCP proxy; OpenClaw runs Tailscale Serve (tailnet only), never Funnel. | `tests/railway-config.test.ts` |
+| Tailnet-only access | The Gateway listens only on loopback (`127.0.0.1:18789`); the only way in is OpenClaw-managed Tailscale Serve. Nothing on Railway's private network can reach it; the health relay on 8080 answers only `/healthz`, `/readyz`, `/startupz`. Tailnet policy limits who reaches the node. | `tests/image.test.sh` (Gateway port unreachable from the network; relay 404 matrix) |
+| Gateway authentication | `--auth token` pinned in `CMD`; token ≥ 32 chars enforced by the entrypoint; failed-auth rate limiting in the seed. Tailnet identity can replace the token for the Control UI only ([below](#tailnet-identity-sign-in)). | `tests/image.test.sh` (401 without/with a wrong token) |
+| No proxy-trust shortcuts | `gateway.trustedProxies` empty; no `allowRealIpFallback`, no Host-header origin fallback, no `auth.mode: none`. Forwarded or Tailscale headers sent to the ordinary listener are rejected even with the token; Tailscale identity counts only on OpenClaw's managed Serve listener, verified with `tailscale whois`. | `tests/image.test.sh` (403 with `X-Forwarded-For` or `Tailscale-User-Login` on loopback) |
+| No auto-trusted nodes | Node-role connections (Mac app node, node hosts, phones) must be approved; SSH-verified node auto-approval disabled; no `autoApproveCidrs`. | Live-verified pairing; no automated remote test (there is no remote-reachable listener to test from) |
+| Least privilege | The Gateway, `tailscaled`, the sidecar, and all their children run as uid 1000; root is used only by the entrypoint to prepare the volume and log Tailscale in, then dropped with `setpriv`. No added Linux capabilities (userspace networking, no TUN). The operator terminal (host shell) is off. | `tests/image.test.sh` (every process uid 1000) |
+| Secrets stay out of images and the repo | The Dockerfile declares no `ARG`; secrets are Railway variables (seal them); config refers to them as env SecretRefs; onboarding stores references, not values. | `tests/image.test.sh` (environment and history scans); manual check that no secret value appears under `/data/.openclaw` |
+| Secrets stay out of logs, `ps`, and the agent | The entrypoint never prints the token or the Tailscale auth key; neither is a command-line argument (the key goes to `tailscale up` through a mode-600 file that is deleted). `TS_AUTHKEY` is unset before the Gateway starts, and the sidecar starts without it or the Gateway token. | `tests/image.test.sh` (token absent from process arguments; rejected key absent from output; live tier: key absent from the Gateway's environment, files, and logs) |
 | No self-update | `OPENCLAW_SUPERVISOR_MODE=external` and `OPENCLAW_NO_AUTO_UPDATE=1`; upgrades only by image change. | [UPGRADING.md](UPGRADING.md) |
 
 Known trade-offs:
 
-- The Tailscale container runs as root in its own container (the official
-  image's default) with no extra capabilities and userspace networking.
-- Every tailnet client appears to the Gateway as the Tailscale service's private
-  IP. Auth rate limiting is shared, and Gateway logs don't show which device
-  connected; Tailscale's own logs do.
-- The volume holds OAuth tokens (plaintext SQLite), pairing records, and
-  conversation history. Railway volume backups contain the same. Limit who has
-  access to the Railway project; project members can also `railway ssh` in as
-  root.
+- `tailscaled` runs in the Gateway's container, as the same user. Anything that
+  can run code as `node` (including the agent's shell) can use the local
+  Tailscale daemon, for example `tailscale status` or `tailscale serve`. It
+  already could read the Gateway token and state; keep exec policy tight
+  ([below](#shell-execution)).
+- In userspace mode `tailscaled` listens on `0.0.0.0:<random>` TCP for
+  Tailscale's peer API. It rejects anything that isn't an authenticated tailnet
+  peer (`peerapi: unknown peer`). The previous separate Tailscale container had
+  the same listener.
+- The sidecar's health relay listens on 8080 on Railway's private network. It
+  forwards only the three unauthenticated probe paths (`GET`/`HEAD`); other
+  services in the project can see whether the Gateway is up, nothing more.
+- The volume holds OAuth tokens (plaintext SQLite), pairing records,
+  conversation history, and the Tailscale node key. Railway volume backups
+  contain the same. Limit who has access to the Railway project; project members
+  can also `railway ssh` in as root.
+
+## Tailnet identity sign-in
+
+With `gateway.tailscale.mode: serve`, `gateway.auth.allowTailscale` defaults to
+`true`. A browser that opens `https://openclaw.<tailnet>.ts.net/` signs in to the
+Control UI with its Tailscale identity: no token and no device approval
+(verified; no pairing record is created). Only the Control UI WebSocket and
+avatar reads accept it; HTTP API endpoints (`/v1/*`, `/tools/invoke`, …) always
+require the token, and node-role connections still need pairing approval.
+
+What it means:
+
+- **Your tailnet access policy decides who can sign in.** Anyone whose device
+  the policy lets reach the node on port 443 gets an operator session. OpenClaw
+  has no per-person allowlist for this. On a personal tailnet that is you; on a
+  shared tailnet, restrict access to the node with a tag and a grant
+  ([TAILSCALE.md](TAILSCALE.md#1-prepare-the-tailnet)).
+- **OpenClaw's docs say the tokenless flow assumes a trusted host.** Here the
+  agent can run commands on that host, so a prompt-injected agent could forge
+  identity headers on the loopback listener. That isn't a new hole: the agent
+  runs as the same user as the Gateway and can already read the token and state.
+- To require the token in the browser too:
+
+  ```bash
+  railway ssh --service openclaw -- openclaw config set gateway.auth.allowTailscale false
+  ```
 
 ## Security audit
 
@@ -49,14 +82,16 @@ railway ssh --service openclaw -- openclaw security audit --deep
 Expected result on a correctly deployed template (checked in
 `tests/image.test.sh`, deep probe checked manually):
 
-- **0 critical and 0 warnings** from a fresh deployment: the baseline config
-  sets `gateway.publicOrigin` from `OPENCLAW_PUBLIC_ORIGIN`, which clears
-  `gateway.control_ui.allowed_origins_required`.
-- **1 warning with `--deep`: `gateway.probe_failed` ("missing scope:
-  operator.read").** The deep probe connects without a device identity by
-  design, so it gets no operator scopes. The same warning appears on the
-  unmodified official 2026.9.8 image; it is not a deployment problem. Plain
-  `openclaw security audit` (without `--deep`) has no warnings.
+- **0 critical and 1 warning** from a fresh deployment:
+  `gateway.trusted_proxies_missing` ("Reverse proxy headers are not trusted").
+  It fires for every loopback Gateway with an empty `gateway.trustedProxies`,
+  including OpenClaw's own recommended Serve setup. Managed Serve doesn't use
+  `trustedProxies`, and the suggested fix (trusting `127.0.0.1`) would let every
+  process in the container claim to be a proxy. Leave it.
+- **With `--deep`**: on the previous layout the deep probe added
+  `gateway.probe_failed` ("missing scope: operator.read"), because it connects
+  without a device identity; the same warning appears on the unmodified official
+  image. *(Not yet re-checked with Tailscale in the container.)*
 
 Other useful forms: `openclaw security audit --json` for automation, and
 `openclaw security audit --fix` for OpenClaw's narrow safe fixes (file
@@ -179,7 +214,7 @@ See [OpenClaw's prompt-injection guidance](https://docs.openclaw.ai/gateway/secu
 | Gateway token | Set a new `OPENCLAW_GATEWAY_TOKEN` (deployment step 3; Railway redeploys), then update each client. | Paired devices also hold per-device tokens that a shared-token rotation does not revoke. To cut a device off, `openclaw devices revoke --device <id> --role <role>`. |
 | Provider key | Set the new value on the Railway variable; revoke the old key at the provider. | Onboarding stored a reference, so no OpenClaw change is needed. |
 | Telegram bot token | `/revoke` in @BotFather, set the new `TELEGRAM_BOT_TOKEN`. | |
-| Tailscale node | [TAILSCALE.md](TAILSCALE.md#operations) | |
+| Tailscale node | [TAILSCALE.md](TAILSCALE.md#operations) | `TS_AUTHKEY` is used only on first login; rotating it changes nothing until the node is logged out. |
 
 ## If something is compromised
 
@@ -189,4 +224,5 @@ See [OpenClaw's prompt-injection guidance](https://docs.openclaw.ai/gateway/secu
    `openclaw devices list`, then `openclaw devices revoke …`.
 3. Rotate provider keys and the Telegram bot token.
 4. Review `openclaw security audit --deep` and recent sessions before re-adding
-   the Tailscale node.
+   the node. Removing the machine logs the container out, so it needs a new
+   `TS_AUTHKEY` to rejoin; until then it refuses to start.

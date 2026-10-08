@@ -1,17 +1,23 @@
 # Troubleshooting
 
-Start with the logs: `railway logs --service openclaw` and
-`railway logs --service tailscale`. Lines from this template's entrypoint start
-with `openclaw-railway:`.
+Start with the logs: `railway logs --service openclaw`. Lines from this
+template's entrypoint and sidecar start with `openclaw-railway:`; Tailscale's
+own lines (from `tailscaled`) and OpenClaw's `[tailscale]` lines are in the same
+log.
 
 ## The `openclaw` service won't start
 
 | Log line | Cause | Fix |
 | --- | --- | --- |
-| `openclaw-railway: OPENCLAW_GATEWAY_TOKEN is not set` (exit 64) | Missing variable. | [DEPLOYMENT.md step 3](DEPLOYMENT.md#3-configure-the-gateway). |
+| `openclaw-railway: OPENCLAW_GATEWAY_TOKEN is not set` (exit 64) | Missing variable. | [DEPLOYMENT.md step 3](DEPLOYMENT.md#3-configure-the-gateway-and-tailscale). |
 | `… must be at least 32 characters` | Weak token. | `openssl rand -hex 32`. |
-| `PORT is … but the Gateway listens on 8080` | A `PORT` variable is set to something else. | Delete the `PORT` variable; Railway then injects 8080. |
-| `OPENCLAW_PUBLIC_ORIGIN is not set` / `must be the Gateway's tailnet HTTPS address` | Missing or malformed origin. With the Railway template, usually a mistyped `TAILNET_DNS_NAME` (it must look like `tail1234.ts.net`). | Fix `TAILNET_DNS_NAME`, or set `OPENCLAW_PUBLIC_ORIGIN=https://openclaw.<your-tailnet>.ts.net` directly. |
+| `PORT is 18789, the Gateway's own loopback port` | A `PORT` variable collides with the Gateway. | Delete the `PORT` variable; Railway then injects 8080 for the health relay. |
+| `Tailscale is not logged in (state: NeedsLogin) and TS_AUTHKEY is not set` | First boot without a key, or the machine was removed from the tailnet (its node key no longer works). | Create an auth key and set `TS_AUTHKEY` on `openclaw` ([TAILSCALE.md](TAILSCALE.md)). |
+| `Tailscale login failed; see the error above`, after `invalid key: unable to validate API key` or similar | The key was already used (keys are single-use unless created reusable), expired, or revoked. | Generate a new key and set `TS_AUTHKEY` again. |
+| `state: NeedsMachineAuth`, or `Tailscale login failed` after `tailscale up` times out | Your tailnet requires device approval, and the key wasn't pre-approved. | Approve the machine in the admin console and redeploy, or use a pre-approved key. |
+| `… is set up for the previous layout (a separate tailscale service)` | The volume's config is for the old two-service layout (`gateway.bind: "lan"`, `publicOrigin`, a device-pair `publicUrl`). | Run the four commands the message names, then redeploy. See [UPGRADING.md](UPGRADING.md#migrating-from-the-two-service-layout). |
+| `[tailscale] serve failed: Logged out.`, then the Gateway exits | The Gateway started while Tailscale was logged out. The entrypoint normally logs in first, so this means the login was lost while running. | Redeploy; if the entrypoint then reports `NeedsLogin`, set a new `TS_AUTHKEY`. |
+| `openclaw-railway: tailscaled exited (…); stopping the container` | Tailscale's daemon died; the sidecar stops the container so Railway restarts both. | Nothing if it recovers. If it repeats, read the `tailscaled` lines just before it. |
 | `the entrypoint must start as root` | `RAILWAY_RUN_UID` or a user override is set. | Remove it. The entrypoint drops to `node` itself. |
 | `warning: /data is not a mounted volume` | No volume at `/data`. State will be lost. | Attach the volume at `/data` (`requiredMountPath` normally blocks this deploy). |
 | `Doctor could not enter maintenance … failed to acquire gateway state ownership` | Usually a permission problem (it shows up with EACCES on a root-owned volume), or another Gateway really holds the state. | Redeploy: the entrypoint repairs ownership on every start. Never delete lock files. |
@@ -53,10 +59,12 @@ the dashboard; the volume migrates with the service on its next deploy. See
 ## The deploy health check fails
 
 Railway calls `GET /startupz` on port 8080 with Host `healthcheck.railway.app`
-for up to 600 seconds.
+for up to 600 seconds. The sidecar relays it to the loopback Gateway, which
+answers 200 only after Tailscale Serve is up.
 
 - The logs end in Doctor output: migrations are slow or blocked. Wait, or see
   exit 78 above.
+- The entrypoint stopped at a Tailscale error: see the table above.
 - `/startupz` doesn't depend on channels, so a broken Telegram token does not
   fail deploys. `/readyz` does (it returns 503 with an invalid token; observed).
 - Because the volume can't be shared between deployments, a failed deploy
@@ -74,26 +82,25 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `tailscale` deploy unhealthy; log shows `To authenticate, visit:` | Not logged in. | Set `TS_AUTHKEY`, or open the URL. [TAILSCALE.md](TAILSCALE.md#2-authenticate-the-node) |
-| Machine is `openclaw-1`, not `openclaw`; the dashboard rejects the browser's origin | Name already taken, so `OPENCLAW_PUBLIC_ORIGIN` points at the wrong machine. | Remove the stale machine and rename this one to `openclaw` in the admin console, or set `OPENCLAW_PUBLIC_ORIGIN` to the machine's real name. Check it with `railway ssh --service tailscale -- tailscale status --json`, field `Self.DNSName`. |
-| `curl https://openclaw.<tailnet>.ts.net` times out | Access policy doesn't allow your device, or the node is offline. | Check the policy grant and `tailscale ping openclaw`. |
-| HTTPS fails but `http://openclaw.<tailnet>.ts.net:18789` works | Tailnet HTTPS certificates not enabled. | Admin console → DNS → HTTPS Certificates. |
-| Tailscale log: `localbackend: failed to TCP proxy port … to openclaw.railway.internal:8080` | The Gateway is down, the service isn't named `openclaw`, or the environment is a legacy IPv6-only one. | Check the `openclaw` service; rename it; deploy into an environment created after 2025-10-16. |
-| Node logged out after months | Untagged node hit key expiry. | Tag it or disable key expiry. |
-| Everything works but is slow: HTTPS handshakes take ~1 s, pages load at ~10 KB/s, while `tailscale ping` is fast | Tunnel packets larger than Railway's 1316-byte MTU are being lost. | Make sure the `tailscale` image sets `TS_DEBUG_MTU=1236` (it does by default) and that no variable overrides it. Check with `curl -w '%{time_appconnect}\n' -o /dev/null -s https://openclaw.<tailnet>.ts.net/healthz` (expect well under 0.2 s). |
+| Machine is `openclaw-1`, not `openclaw` | The name was already taken. Everything follows the real name (Serve, origin, QR); only clients you configured by hand still point at `openclaw`. | Remove the stale machine and rename this one to `openclaw` in the admin console, or point clients at `openclaw-1`. `railway ssh --service openclaw -- tailscale status --json` shows the name (`Self.DNSName`). |
+| `curl https://openclaw.<tailnet>.ts.net` times out | Access policy doesn't allow your device, or the machine is offline. | Check the policy grant and `tailscale ping openclaw`. |
+| The first HTTPS request takes ~15 s | A new machine's certificate is being issued. | Nothing; later requests are fast. |
+| HTTPS never works and the Gateway fails to start Serve | Tailnet HTTPS certificates are not enabled. There is no plaintext fallback. | Admin console → DNS → HTTPS Certificates, then redeploy. |
+| Machine logged out after months | Untagged machine hit key expiry. | Tag it or disable key expiry, then set a new `TS_AUTHKEY` and redeploy. |
+| Everything works but is slow: HTTPS handshakes take ~1 s, pages load at ~10 KB/s, while `tailscale ping` is fast | Tunnel packets larger than Railway's 1316-byte MTU are being lost. | Make sure the image's `TS_DEBUG_MTU=1236` is in effect and that no variable overrides it. Check with `curl -w '%{time_appconnect}\n' -o /dev/null -s https://openclaw.<tailnet>.ts.net/healthz` (expect well under 0.2 s after the first request). |
 
 ## Connecting
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `pairing required` / `disconnected (1008)` | New device. | `openclaw devices list`, then `approve <requestId>`. |
-| `Proxy client attribution is required …` (403) | Something in front of the Gateway now adds `X-Forwarded-*` or `Tailscale-*` headers, for example `serve.json` changed to an HTTP proxy. | Restore raw TCP forwarding (CI checks this). Don't add `trustedProxies`. |
-| Gateway log: `observed unattributable proxy-shaped traffic from <ip>` | A client sent `X-Forwarded-*` or `Tailscale-*` headers. Tailscale's TCP forward passes client headers through unchanged, and the Gateway rejected that request (403). Logged once per process. | Nothing, unless it repeats from clients you don't expect. |
+| `Proxy client attribution is required …` (403) | A request reached the Gateway's ordinary loopback listener with `X-Forwarded-*` or `Tailscale-*` headers, for example from a process in the container or a hand-made Serve route. Only OpenClaw's own Serve listener accepts them. | Use the Serve URL. Don't add `trustedProxies`. |
+| Security audit warns `gateway.trusted_proxies_missing` | Expected: OpenClaw reports it for every loopback Gateway without `trustedProxies`, including its own Serve setup. | Nothing. Trusting `127.0.0.1` to silence it would trust every process in the container. |
 | `missing scope: operator.read` from a remote CLI with `--url` | `--url` connections without a paired device identity get no operator scopes. | Run operator commands through `railway ssh`, or pair the client. |
 | Mac app: dashboard works but Mac capabilities offline | The node role or its capabilities aren't approved. | `openclaw devices list` and `openclaw nodes pending`; approve. |
-| `openclaw qr`: `This Gateway URL uses plaintext ws://, so the setup code was limited` | A deployment created before the pairing URL was added to the baseline config; the code points at the container's private address. | `openclaw config set plugins.entries.device-pair.config.publicUrl '${OPENCLAW_PUBLIC_ORIGIN}'` (applies without a restart), then generate a new code. |
+| `openclaw qr`: `This Gateway URL uses plaintext ws://, so the setup code was limited` | `gateway.tailscale.mode` isn't `serve` in the config file, so `openclaw qr` falls back to a bind-derived address. | `openclaw config get gateway.tailscale.mode` should print `serve`; see [UPGRADING.md](UPGRADING.md#migrating-from-the-two-service-layout). |
 | `Protocol mismatch` in the dashboard after an upgrade | Stale cached UI. | Hard-refresh or clear site data for the dashboard origin. |
-| `401 Unauthorized` everywhere | Wrong or rotated token, or too many failures. | Check the token; after 10 failures in a minute, the Tailscale service's IP is locked out for 5 minutes. That affects every tailnet client, because they share it. |
+| `401 Unauthorized` everywhere | Wrong or rotated token, or too many failures. | Check the token; after 10 failures in a minute, the client is locked out for 5 minutes. |
 
 ## `railway ssh` commands
 
@@ -110,6 +117,9 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 - `openclaw models status --probe` refuses to run while the Gateway holds the
   state. Test the provider through the Gateway instead:
   `openclaw agent --agent main --message "Reply with exactly: OK"`.
-- `openclaw security audit --deep` always reports `gateway.probe_failed (missing
-  scope: operator.read)` on 2026.9.8, including on the unmodified upstream image.
-  See [SECURITY.md](SECURITY.md#security-audit).
+- `openclaw security audit` reports `gateway.trusted_proxies_missing`; that is
+  expected (see [Connecting](#connecting)). `--deep` also reports
+  `gateway.probe_failed (missing scope: operator.read)` on 2026.9.8, including
+  on the unmodified upstream image. See [SECURITY.md](SECURITY.md#security-audit).
+- `tailscale` works in a root `railway ssh` shell too (for example
+  `tailscale status`); it talks to the daemon over its socket.

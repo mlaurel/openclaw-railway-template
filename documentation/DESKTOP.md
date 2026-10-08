@@ -12,10 +12,13 @@ calls the Gateway `health` RPC).
 
 | | Value |
 | --- | --- |
-| URL | `wss://openclaw.<tailnet>.ts.net` (port 443, Tailscale TLS) |
-| Fallback URL | `ws://openclaw.<tailnet>.ts.net:18789` (plaintext inside WireGuard; OpenClaw allows `ws://` for `.ts.net` hosts) |
+| URL | `wss://openclaw.<tailnet>.ts.net` (port 443, Tailscale Serve, which OpenClaw manages) |
 | Credential | Gateway token (`OPENCLAW_GATEWAY_TOKEN`) |
 | Then | one-time device pairing approval on the Gateway |
+
+There is no plaintext port: the Gateway listens only on loopback inside the
+container, and Serve is the only way in. If the machine is `openclaw-1` (the
+name was taken), use that name instead.
 
 TLS on 443 uses the tailnet's publicly trusted certificate, so the app trusts it
 through normal macOS trust and records a first-use pin. For `*.ts.net` Serve
@@ -53,9 +56,8 @@ read -rs gateway_token && printf '%s' "$gateway_token" | \
 ## Approve pairing
 
 The app asks for two roles: **operator** (dashboard, chat, control) and **node**
-(Mac capabilities such as notifications and screen tools). The Gateway treats
-tailnet connections as remote, so nothing is auto-approved; only direct
-loopback connections are. Approve every pending request from the Mac:
+(Mac capabilities such as notifications and screen tools). Nothing from the
+tailnet is auto-approved. Approve every pending request from the Mac:
 
 ```bash
 railway ssh --service openclaw -- openclaw devices list
@@ -89,14 +91,18 @@ the volume and survive redeploys. Revoke a device with
   own without new pairing requests.
 
 Verified on a live Railway deployment (2026-10-08) with the macOS app 2026.9.8,
-connected as primary over `wss://`.
+connected as primary over `wss://`, with the previous two-service layout.
+**(live-unverified** with Tailscale inside the `openclaw` container; the URL and
+token are unchanged.)
 
 ## Browser dashboard
 
-Open `https://openclaw.<tailnet>.ts.net/` on a tailnet device and sign in with
-the Gateway token. Each browser profile is a separate device: approve it with
-`openclaw devices list` / `approve` as above. Private windows forget their
-device identity and need approval every time.
+Open `https://openclaw.<tailnet>.ts.net/` on a tailnet device. The dashboard
+signs you in with your Tailscale identity: no token and no device approval
+(verified locally against a real tailnet). OpenClaw checks the identity with
+the local Tailscale daemon on every connection. Anyone your Tailscale access
+policy lets reach the machine can sign in this way; see
+[TAILSCALE.md](TAILSCALE.md).
 
 ## Phone (iOS and Android)
 
@@ -107,7 +113,8 @@ OpenClaw app:
 railway ssh --service openclaw -- openclaw qr
 ```
 
-The code advertises `wss://openclaw.<tailnet>.ts.net` with full access. Add
+The code advertises `wss://openclaw.<tailnet>.ts.net` with full access; OpenClaw
+takes the address from Serve, so nothing needs configuring. Add
 `--limited` to withhold administrative access from the phone. The code holds a
 short-lived bootstrap token, so don't post it anywhere. Approve the device with
 `openclaw devices list` / `approve` if it stays pending.
@@ -124,7 +131,7 @@ registered with Railway.
 2. Keep a tunnel open:
 
    ```bash
-   ssh -N -L 18789:127.0.0.1:8080 <service-instance-id>@ssh.railway.com
+   ssh -N -L 18789:127.0.0.1:18789 <service-instance-id>@ssh.railway.com
    ```
 
 3. Point the app at `ws://127.0.0.1:18789` with the Gateway token.

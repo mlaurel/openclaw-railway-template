@@ -2,14 +2,17 @@
 
 Two ways to deploy:
 
-- **Railway template**: one click plus two variables. Follow
+- **Railway template**: one click plus one variable. Follow
   [QUICKSTART.md](QUICKSTART.md). Use this unless you need to change the code.
 - **From your fork, with Infrastructure as Code**: this page. Use it when you
   maintain your own fork (`.railway/railway.ts` then describes the project).
 
 Both end at the same place: a Gateway reachable only through your tailnet, with
-the macOS app paired and, optionally, Telegram. Everything on this page was run
-against a live Railway project on 2026-10-08 except where marked.
+the macOS app paired and, optionally, Telegram. Tailscale runs inside the
+`openclaw` container, and OpenClaw manages Tailscale Serve itself. Steps marked
+**live-unverified** have run locally against a real tailnet but not yet on
+Railway in this layout; the rest of this page was run against a live Railway
+project on 2026-10-08.
 
 ## Prerequisites
 
@@ -24,7 +27,7 @@ against a live Railway project on 2026-10-08 except where marked.
 - Node.js 24+ (to evaluate `.railway/railway.ts`).
 - A Tailscale tailnet with MagicDNS and
   [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled.
-  Note its DNS name (admin console → **DNS**), for example `tail1234.ts.net`.
+  Serve requires them; there is no plaintext fallback.
 
 ## 1. Create the Railway project
 
@@ -35,22 +38,17 @@ npm ci
 railway init --name openclaw
 ```
 
-`railway init` creates a project with a new `production` environment. New
-environments resolve private DNS to both IPv4 and IPv6, which this template
-requires; **do not reuse an environment created before 2025-10-16**
-([why](ARCHITECTURE.md#requirements-and-limits)).
-
-**Choose the region now.** `.railway/railway.ts` places both services and both
-volumes in `us-west2` unless you set `OPENCLAW_RAILWAY_REGION` (or edit the
+**Choose the region now.** `.railway/railway.ts` places the service and its
+volume in `us-west2` unless you set `OPENCLAW_RAILWAY_REGION` (or edit the
 `region` constant) before the first apply; region IDs are in
 [Railway's regions docs](https://docs.railway.com/deployments/regions). Moving
-later means migrating the volumes: `railway config apply` reports a volume
-region change but does not move the volume. Change the services' region instead
-(dashboard → service → Settings → Region), and each volume migrates with its
-service on the next deploy, with downtime proportional to its size. Then update
-the region in `railway.ts` so plans stay clean.
+later means migrating the volume: `railway config apply` reports a volume region
+change but does not move the volume. Change the service's region instead
+(dashboard → service → Settings → Region), and the volume migrates with it on
+the next deploy, with downtime proportional to its size. Then update the region
+in `railway.ts` so plans stay clean.
 
-## 2. Create both services and their volumes
+## 2. Create the service and its volume
 
 Point `.railway/railway.ts` at your fork: edit `sourceRepository` in the file
 (it then travels with your fork), or export the variable for this shell:
@@ -61,41 +59,37 @@ railway config plan
 railway config apply
 ```
 
-The plan shows two services (`openclaw`, `tailscale`), two volumes
-(`openclaw-state` at `/data`, `tailscale-state` at `/var/lib/tailscale`), and no
-domains.
+The plan shows one service (`openclaw`), one volume (`openclaw-state` at
+`/data`), and no domains.
 
-Railway builds both services immediately. Both first deploys fail, as expected:
-`openclaw` refuses to start until step 3 sets its variables, and `tailscale` has
-no auth key until step 7. With no key, `tailscale` prints a login URL in its
-deploy logs and fails its 300-second health check.
+Railway builds the service immediately. The first deploy fails, as expected:
+the entrypoint refuses to start until step 3 sets its variables.
 
 <details>
 <summary>Dashboard equivalent (no CLI)</summary>
 
-Create two services from your GitHub fork, named exactly `openclaw` and
-`tailscale` (the Tailscale config forwards to `openclaw.railway.internal`). Then:
+Create one service from your GitHub fork, named `openclaw`. Then:
 
-| Setting | `openclaw` | `tailscale` |
-| --- | --- | --- |
-| Root directory | (repository root) | `tailscale` |
-| Builder | Dockerfile | Dockerfile |
-| Volume mount path | `/data` | `/var/lib/tailscale` |
-| Region | same for both services | same for both services |
-| Healthcheck path / timeout | `/startupz` / 600 s | `/healthz` / 300 s |
-| Restart policy | Always | Always |
-| Replicas | 1 | 1 |
-| Draining seconds | 330 | default |
-| `PORT` variable | **none** (Railway's default, 8080, is what both listen on) | **none** |
-| Public networking | none | none |
+| Setting | Value |
+| --- | --- |
+| Root directory | (repository root) |
+| Builder | Dockerfile |
+| Volume mount path | `/data` |
+| Healthcheck path / timeout | `/startupz` / 600 s |
+| Restart policy | Always |
+| Replicas | 1 |
+| Draining seconds | 330 |
+| `PORT` variable | **none** (Railway's default, 8080, is where the health relay listens) |
+| Public networking | none |
 
 </details>
 
-## 3. Configure the Gateway
+## 3. Configure the Gateway and Tailscale
 
-Two variables. The token authenticates every client; the origin is the address
-you'll reach the Gateway at, which OpenClaw also uses as its browser-origin
-allowlist (the entrypoint refuses to start without it).
+Two variables. The token authenticates clients that don't sign in with their
+tailnet identity (the Mac app, the CLI, the HTTP API). The Tailscale auth key
+logs the container in to your tailnet on first boot; after that, the node key
+on the volume does, and the auth key is never read again.
 
 On macOS, generate the token straight into your Keychain and pipe it to Railway,
 so it never appears on screen or in your shell history:
@@ -104,23 +98,46 @@ so it never appears on screen or in your shell history:
 security add-generic-password -U -a openclaw-railway -s openclaw-railway-gateway-token -w "$(openssl rand -hex 32)"
 security find-generic-password -s openclaw-railway-gateway-token -w | tr -d '\n' | \
   railway variable set OPENCLAW_GATEWAY_TOKEN --stdin --service openclaw --skip-deploys
-railway variable set OPENCLAW_PUBLIC_ORIGIN=https://openclaw.<your-tailnet>.ts.net --service openclaw
 ```
 
-(Elsewhere: `openssl rand -hex 32 | tee /dev/tty | tr -d '\n' | railway variable set OPENCLAW_GATEWAY_TOKEN --stdin --service openclaw`,
+(Elsewhere: `openssl rand -hex 32 | tee /dev/tty | tr -d '\n' | railway variable set OPENCLAW_GATEWAY_TOKEN --stdin --service openclaw --skip-deploys`,
 and save the printed value in a password manager.) Seal the token in the
 dashboard (Variables → ⋯ → Seal) if you don't need to read it back.
 
-The second command deploys. Watch it:
+Then create an auth key in the Tailscale admin console (**Settings → Keys →
+Generate auth key**: not reusable, not ephemeral, 1-day expiry, tagged
+`tag:openclaw` if your policy defines it; see [TAILSCALE.md](TAILSCALE.md)),
+copy it, and set it:
+
+```bash
+pbpaste | tr -d '\n' | railway variable set TS_AUTHKEY --stdin --service openclaw
+```
+
+That deploys. Watch it:
 
 ```bash
 railway logs --service openclaw
 ```
 
-Expect `openclaw-railway: created /data/.openclaw/openclaw.json from the baseline config`,
-Doctor output, then `[gateway] http server listening`. Railway marks the deploy
-healthy once `/startupz` returns 200 (≈3 minutes the first time, mostly pulling
-the base image).
+Expect, in order:
+
+- `openclaw-railway: created /data/.openclaw/openclaw.json from the baseline config`
+- `openclaw-railway: logged in to Tailscale as openclaw`
+- Doctor output, then `[tailscale] serve enabled: https://openclaw.<your-tailnet>.ts.net/`
+- `[gateway] http server listening`
+
+Railway marks the deploy healthy once `/startupz` returns 200 through the health
+relay (≈3 minutes the first time, mostly pulling the base image). A machine
+named `openclaw` is now in your tailnet. From any tailnet device:
+
+```bash
+curl -fsS https://openclaw.<your-tailnet>.ts.net/healthz   # {"ok":true,"status":"live"}
+```
+
+The first HTTPS request to a new machine takes about 15 seconds while Tailscale
+issues its certificate. If the name `openclaw` was already taken, the machine is
+`openclaw-1` and the address follows; OpenClaw picks up the real name itself.
+**(live-unverified** on Railway in this layout.)
 
 ## 4. Choose an AI provider
 
@@ -144,17 +161,20 @@ user for you, and the session sees the service's variables.
 railway ssh --service openclaw -- openclaw onboard --non-interactive --accept-risk --skip-health \
   --mode local --auth-choice apiKey --secret-input-mode ref \
   --gateway-auth token --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
-  --gateway-bind lan --skip-channels --no-install-daemon
+  --gateway-bind loopback --skip-channels --no-install-daemon
 ```
 
 This creates the `main` agent, its workspace under `/data/.openclaw/workspace`,
 and an auth profile that *references* `ANTHROPIC_API_KEY` rather than copying it.
+Keep `--gateway-bind loopback`: OpenClaw-managed Serve requires it, and
+onboarding keeps `gateway.tailscale.mode: "serve"` (verified locally). With
+`lan`, the next start refuses the config.
 For other providers replace `--auth-choice apiKey` (see `openclaw onboard --help`
 and [OpenClaw's automation guide](https://docs.openclaw.ai/start/wizard-cli-automation)).
 
 ## 6. Confirm the restart
 
-Onboarding changes `gateway.port`, which needs a restart. Because Railway is the
+Onboarding rewrites the Gateway settings, which needs a restart. Because Railway is the
 supervisor (`OPENCLAW_SUPERVISOR_MODE=external`), the Gateway exits cleanly and
 Railway's `ALWAYS` restart policy starts it again (observed: back in ≈30 s).
 Then check that the agent answers:
@@ -167,22 +187,13 @@ railway ssh --service openclaw -- openclaw agent --agent main --message "Reply w
 `openclaw models status --probe` refuses to run while the Gateway holds the
 state; the agent message tests the same credential end to end.
 
-## 7. Connect Tailscale
+## 7. Open the dashboard
 
-Create an auth key ([TAILSCALE.md](TAILSCALE.md#2-authenticate-the-node)), copy
-it, then:
-
-```bash
-pbpaste | tr -d '\n' | railway variable set TS_AUTHKEY --stdin --service tailscale
-```
-
-After the deploy, a machine named `openclaw` appears in your tailnet. From any
-tailnet device:
-
-```bash
-curl -fsS https://openclaw.<your-tailnet>.ts.net/healthz        # {"ok":true,"status":"live"}
-curl -fsS http://openclaw.<your-tailnet>.ts.net:18789/healthz   # same, without TLS
-```
+On any tailnet device, open `https://openclaw.<your-tailnet>.ts.net/`. The
+browser signs in with your Tailscale identity: no token and no device approval
+(verified locally against a real tailnet). Anyone your Tailscale access policy
+lets reach the machine on port 443 can sign in this way, so check the policy
+([TAILSCALE.md](TAILSCALE.md), [SECURITY.md](SECURITY.md)).
 
 If you didn't tag the key, the machine belongs to your user: disable its key
 expiry in the admin console, or it leaves the tailnet after 180 days.
@@ -202,7 +213,9 @@ Details and the in-app route: [DESKTOP.md](DESKTOP.md).
 
 ## 9. Approve device pairing
 
-The first connection from each device stays pending until you approve it:
+Browsers signed in with their tailnet identity skip this. The Mac app, the
+iOS and Android apps, and node hosts pair with a device identity, and their
+first connection stays pending until you approve it:
 
 ```bash
 railway ssh --service openclaw -- openclaw devices list
@@ -217,7 +230,8 @@ allow ([SECURITY.md](SECURITY.md#local-node-permissions-the-mac)); from the CLI
 it's `openclaw nodes pending` / `openclaw nodes approve <id>`.
 
 Pairing is stored in `/data/.openclaw/state/openclaw.sqlite` and survives
-redeploys.
+redeploys. **(live-unverified:** Mac app pairing has not yet been run against
+this layout.)
 
 ## 10. Connect Telegram
 
@@ -254,8 +268,12 @@ with a real bot on Railway.)
 railway ssh --service openclaw -- openclaw security audit --deep
 ```
 
-Expected: 0 critical, and one warning, `gateway.probe_failed`, which the deep
-probe reports on every 2026.9.8 install ([why](SECURITY.md#security-audit)).
+Expected: 0 critical, and the warning `gateway.trusted_proxies_missing`, which
+OpenClaw reports for every loopback Gateway without `trustedProxies`, including
+its own Serve setup. Don't add `trustedProxies` to silence it: trusting
+`127.0.0.1` would trust every process in the container. `--deep` has also
+reported `gateway.probe_failed` on every 2026.9.8 install
+([why](SECURITY.md#security-audit)).
 
 ## 12. Verify the deployment
 
@@ -264,12 +282,12 @@ probe reports on every 2026.9.8 install ([why](SECURITY.md#security-audit)).
 | Version | `railway ssh --service openclaw -- openclaw --version` | `OpenClaw 2026.9.8` |
 | Gateway health | `railway ssh --service openclaw -- openclaw health` | OK |
 | Deep readiness | `curl -fsS https://openclaw.<tailnet>.ts.net/readyz` (tailnet device) | `{"ready":true}` |
-| No public exposure | Railway dashboard → each service → Settings → Networking | no domains, no TCP proxy |
-| Auth enforced | `curl -s -o /dev/null -w '%{http_code}' https://openclaw.<tailnet>.ts.net/control-ui-config.json` | `401` |
+| No public exposure | Railway dashboard → `openclaw` → Settings → Networking | no domains, no TCP proxy |
+| Loopback-only Gateway | `railway ssh --service openclaw -- openclaw config get gateway.bind` | `loopback` |
 | Desktop | `openclaw-mac status --json` | primary `connected` |
 | Telegram | DM the bot | agent reply |
 | Persistence | `railway redeploy --service openclaw --yes`, then repeat the Desktop check | still paired, no re-approval |
-| Tailscale persistence | `railway redeploy --service tailscale --yes` | same machine and IP, no new key used |
+| Tailscale persistence | After the redeploy, `railway logs --service openclaw` | `serve enabled` again, no new `logged in to Tailscale`; same machine and IP |
 
 ## Keeping variables in sync
 
@@ -287,28 +305,25 @@ variable if you confirm. So:
 
 ## Backups
 
-Turn on scheduled volume backups for both services in the dashboard (service →
-**Backups** → Daily and Weekly). See [UPGRADING.md](UPGRADING.md#5-back-up) for
+Turn on scheduled volume backups in the dashboard (`openclaw` → **Backups** →
+Daily and Weekly). The volume holds the Tailscale node key too, so a restore
+brings back the same machine. See [UPGRADING.md](UPGRADING.md#5-back-up) for
 on-demand backups and restores.
 
 ## Maintaining the Railway template
 
 The published template is generated from a separate source project, not from a
 live deployment, so no real secret can reach it. Railway's `templateGenerate`
-keeps service names, sources (including root directories), health-check paths,
-restart policy, volume mount paths, and template *functions* such as
-`${{secret(64, "abcdef0123456789")}}`. It **drops literal variable values** and
-marks every variable required. That is why both services listen on Railway's
-default port instead of taking a `PORT` variable. To regenerate:
-
-It also keeps variable *references*, even mixed with literal text, so the
-template asks only for `TAILNET_DNS_NAME` and pre-fills
-`OPENCLAW_PUBLIC_ORIGIN` as `https://openclaw.${{TAILNET_DNS_NAME}}`. It drops
-variable descriptions.
+keeps service names, sources, health-check paths, restart policy, volume mount
+paths, and template *functions* such as `${{secret(64, "abcdef0123456789")}}`.
+It **drops literal variable values**, marks every variable required, and drops
+variable descriptions. That is why the service takes no `PORT` variable and
+relies on Railway's default. The template asks only for `TS_AUTHKEY`; it
+generates `OPENCLAW_GATEWAY_TOKEN`.
 
 **Small changes** (variables, descriptions, defaults): edit the published
 template directly. Railway dashboard → workspace **Templates** → the template →
-**Edit** → **Architecture**, open a service's **Variables**, make the change,
+**Edit** → **Architecture**, open the service's **Variables**, make the change,
 review **Details**, and **Apply**. Check the result with
 `railway api 'query { template(code: "openclaw-private-gateway") { serializedConfig } }'`.
 
@@ -317,16 +332,14 @@ review **Details**, and **Apply**. Check the result with
 template in place**, even when it is published, and the published template's
 original source project no longer exists. So:
 
-1. In a scratch project whose services mirror `.railway/railway.ts`, set
-   `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}`,
-   `OPENCLAW_PUBLIC_ORIGIN` to `https://openclaw.${{TAILNET_DNS_NAME}}`, and
-   placeholder values for `TAILNET_DNS_NAME` and `TS_AUTHKEY`.
+1. In a scratch project whose service mirrors `.railway/railway.ts`, set
+   `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}` and a
+   placeholder value for `TS_AUTHKEY`.
 2. `railway api 'mutation($p: String!) { templateGenerate(input: { projectId: $p }) { id code serializedConfig } }' --variables '{"p":"<project-id>"}'`
-3. Inspect `serializedConfig`: no secret values, both volumes, `rootDirectory: "tailscale"`,
-   and the `OPENCLAW_PUBLIC_ORIGIN` reference.
+3. Inspect `serializedConfig`: no secret values, one service, one volume at `/data`.
 4. Deploy it into another scratch project
-   (`railway deploy -t <code> -v openclaw.TAILNET_DNS_NAME=… -v tailscale.TS_AUTHKEY=…`)
-   and wait for `openclaw` to turn healthy.
-5. Publish the new template (a new URL), add the variable descriptions in the
-   template editor, point the README's Deploy button at it, and unpublish the
-   old one.
+   (`railway deploy -t <code> -v openclaw.TS_AUTHKEY=…`, with a reusable,
+   ephemeral key) and wait for `openclaw` to turn healthy.
+5. Publish the new template (a new URL), add the variable description for
+   `TS_AUTHKEY` in the template editor, point the README's Deploy button at it,
+   and unpublish the old one.

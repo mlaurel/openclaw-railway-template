@@ -1,46 +1,42 @@
 # Tailscale
 
-The `tailscale` service is the only way into the Gateway. It joins your tailnet
-as a tagged machine named `openclaw` and forwards two ports to the Gateway over
-Railway's private network:
+Tailscale runs inside the `openclaw` container, and OpenClaw manages Tailscale
+Serve itself (`gateway.tailscale.mode: serve`). The container joins your tailnet
+as a machine named `openclaw`, and the Gateway is reachable at:
 
-| Tailnet address | Transport | Forwarded to |
+| Tailnet address | Transport | Served by |
 | --- | --- | --- |
-| `wss://openclaw.<tailnet>.ts.net` (port 443) | TLS terminated by Tailscale with the tailnet's Let's Encrypt certificate | `openclaw.railway.internal:8080` |
-| `ws://openclaw.<tailnet>.ts.net:18789` | plaintext inside WireGuard | `openclaw.railway.internal:8080` |
+| `https://openclaw.<tailnet>.ts.net/` and `wss://openclaw.<tailnet>.ts.net` (port 443) | TLS terminated by Tailscale with the tailnet's Let's Encrypt certificate | OpenClaw-managed Serve, proxied to a dedicated loopback listener |
 
-Both are raw TCP forwards (`TCPForward` in `tailscale/serve.json`), not HTTP
-proxies, so no forwarded headers reach the Gateway
-([why that matters](ARCHITECTURE.md#why-the-proxy-attribution-error-cannot-recur)).
-Use the `wss://` address; the `ws://` port is a fallback for tailnets without
-HTTPS certificates. OpenClaw clients accept plaintext `ws://` to `.ts.net` hosts.
+There is no plaintext fallback port: the Gateway listens only on loopback, and
+Serve needs tailnet HTTPS certificates. Browsers that reach the address sign in
+with their Tailscale identity ([SECURITY.md](SECURITY.md#tailnet-identity-sign-in));
+why forwarded headers can't be abused is in
+[ARCHITECTURE.md](ARCHITECTURE.md#why-the-proxy-attribution-error-cannot-recur).
 
-## Variables (verified against containerboot v1.102.5)
+## Variables
 
 | Variable | Set in | Value | Effect |
 | --- | --- | --- | --- |
-| `TS_USERSPACE` | image | `true` | Userspace networking: no `/dev/net/tun`, no `NET_ADMIN`. Serve still works because tailscaled accepts tailnet connections itself. |
-| `TS_STATE_DIR` | image | `/var/lib/tailscale` | Node key and identity, on the service's Railway volume. |
-| `TS_AUTH_ONCE` | image | `true` | Logs in only when not already logged in, so a restart never consumes a key. |
-| `TS_SERVE_CONFIG` | image | `/etc/tailscale/serve.json` | Applied after login; `${TS_CERT_DOMAIN}` becomes the node's MagicDNS name. Containerboot watches the file, but it is baked into the image, so changes ship as a redeploy. |
-| `TS_HOSTNAME` | image (override in Railway) | `openclaw` | MagicDNS name. If the name is taken, Tailscale appends a suffix such as `openclaw-1`. |
-| `TS_ENABLE_HEALTH_CHECK`, `TS_LOCAL_ADDR_PORT` | image | `true`, `[::]:8080` (Railway's default `PORT`) | `/healthz` returns 200 once the node has a tailnet IP, 503 before. Railway's health check uses it. |
-| `TS_DEBUG_MTU` | image | `1236` | Tunnel MTU. Railway's network interface has a 1316-byte MTU, and a full Tailscale packet is 1280 plus 80 bytes of WireGuard overhead, so larger packets were lost: TLS handshakes took 0.6–1.7 s and transfers ran near 10 KB/s. 1236 = 1316 − 80. Measured after the change: 65–75 ms handshakes, a 20 KB page in 0.25 s. This is a debug knob in Tailscale, so re-check it when upgrading Tailscale. |
-| `TS_AUTHKEY` | Railway (secret) | `tskey-auth-…` | First login only. |
-| `TS_ACCEPT_DNS` | default (`false`) | — | Keeps Railway's resolver, which `openclaw.railway.internal` depends on. |
+| `TS_AUTHKEY` | Railway (secret) | `tskey-auth-…` | Used only when the node is logged out: first boot, or after the machine was removed from the tailnet. Passed to `tailscale up` through a temporary file, then unset before the Gateway starts. |
+| `TS_HOSTNAME` | image (override in Railway) | `openclaw` | MagicDNS name requested at first login. If the name is taken, Tailscale appends a suffix such as `openclaw-1`; nothing in the template depends on the name. |
+| `TS_STATE_DIR` | image | `/data/tailscale` | Node key, identity, and certificates, on the service's volume. |
+| `TS_SOCKET` | image | `/var/run/tailscale/tailscaled.sock` | The CLI's default path, so `tailscale` and OpenClaw find the daemon without flags. |
+| `TS_DEBUG_MTU` | image | `1236` | Tunnel MTU. Railway's network interface has a 1316-byte MTU, and a full Tailscale packet is 1280 plus 80 bytes of WireGuard overhead, so larger packets were lost: TLS handshakes took 0.6–1.7 s and transfers ran near 10 KB/s. 1236 = 1316 − 80. Measured after the change (previous layout): 65–75 ms handshakes, a 20 KB page in 0.25 s. *Not yet re-measured on Railway with Tailscale in this container.* This is a debug knob in Tailscale, so re-check it when upgrading Tailscale. |
 
-Railway can't mount files into a service, which is why `serve.json` is part of
-the image and the `tailscale` service builds from this repository (with
-`tailscale/` as its root directory) instead of using the bare
-`tailscale/tailscale` image.
+`tailscaled` runs as `node` in userspace mode (no `/dev/net/tun`, no
+`NET_ADMIN`), started by `scripts/sidecar.mjs`. If it exits, the sidecar stops
+the container so Railway restarts everything
+([ARCHITECTURE.md](ARCHITECTURE.md#the-sidecar)).
 
 ## 1. Prepare the tailnet
 
 In the [admin console](https://login.tailscale.com/admin):
 
-1. **DNS**: enable MagicDNS and **HTTPS Certificates**.
+1. **DNS**: enable MagicDNS and **HTTPS Certificates**. Both are required.
 2. **Access controls**: add a tag owner and a grant that lets only you reach the
-   Gateway. Replace `you@example.com`:
+   Gateway. With tailnet identity sign-in, this policy is also who can open the
+   dashboard. Replace `you@example.com`:
 
    ```jsonc
    {
@@ -48,31 +44,29 @@ In the [admin console](https://login.tailscale.com/admin):
        "tag:openclaw": ["autogroup:admin"],
      },
      "grants": [
-       // Only the operator's devices may reach the Gateway, and only its two ports.
-       { "src": ["you@example.com"], "dst": ["tag:openclaw"], "ip": ["tcp:443", "tcp:18789"] },
+       // Only the operator's devices may reach the Gateway, and only HTTPS.
+       { "src": ["you@example.com"], "dst": ["tag:openclaw"], "ip": ["tcp:443"] },
      ],
      "tests": [
-       { "src": "you@example.com", "accept": ["tag:openclaw:443", "tag:openclaw:18789"] },
+       { "src": "you@example.com", "accept": ["tag:openclaw:443"] },
      ],
    }
    ```
 
    Merge this into your existing policy. If the policy still contains the
    default allow-all rule (`"src": ["*"], "dst": ["*:*"]` or the grants
-   equivalent), every tailnet member can reach the Gateway; narrow it. The
-   `openclaw` node gets no grants of its own, so it cannot open connections to
-   anything else on your tailnet even if the Gateway is compromised.
+   equivalent), every tailnet member can reach and sign in to the Gateway;
+   narrow it. The `openclaw` node gets no grants of its own, so it cannot open
+   connections to anything else on your tailnet even if the Gateway is
+   compromised. If you use OpenClaw portals, they allocate further Serve HTTPS
+   ports that the grant must also allow.
 
 ## 2. Authenticate the node
-
-Pick one.
-
-### Option A: one-off tagged auth key (recommended)
 
 **Settings → Keys → Generate auth key**:
 
 - Reusable: **off**. The key is used once; afterwards the identity lives on the
-  `tailscale-state` volume.
+  volume.
 - Expiration: 1 day. It only needs to last until the first deploy.
 - Ephemeral: **off**. An ephemeral node would be removed when it disconnects
   (for example during a redeploy).
@@ -80,35 +74,17 @@ Pick one.
 - Tags: `tag:openclaw`.
 
 ```bash
-read -rs auth_key && printf '%s' "$auth_key" | railway variable set TS_AUTHKEY --stdin --service tailscale; unset auth_key
+read -rs auth_key && printf '%s' "$auth_key" | railway variable set TS_AUTHKEY --stdin --service openclaw; unset auth_key
 ```
+
+Without a key the container refuses to start: "Tailscale is not logged in … and
+TS_AUTHKEY is not set." A rejected or expired key fails with Tailscale's own
+error and "Tailscale login failed"; the key is never printed.
 
 Tagged nodes have key expiry disabled by default, so the node stays logged in.
-After it joins you can delete `TS_AUTHKEY` from the service (and from
-`.railway/railway.ts`); a consumed one-off key is useless anyway.
-
-### Option B: no auth key
-
-Leave `TS_AUTHKEY` unset. On first start, containerboot prints a login URL
-(observed: `To authenticate, visit: https://login.tailscale.com/a/…`):
-
-```bash
-railway logs --service tailscale
-```
-
-Open it within the 5-minute health-check window and log in. Then in the admin
-console, on the `openclaw` machine: **Edit ACL tags** → `tag:openclaw`, and
-**Disable key expiry** if it isn't tagged. Anyone who can read the service's
-logs during that window could claim the node, so prefer option A when other
-people have access to the Railway project.
-
-### Option C: OAuth client (not tested here)
-
-Containerboot v1.102.5 also accepts `TS_CLIENT_ID` and `TS_CLIENT_SECRET` (an
-OAuth client with the `auth_keys` scope) and generates its own key. Keys minted
-this way must carry tags, so also set `TS_EXTRA_ARGS=--advertise-tags=tag:openclaw`.
-These are mutually exclusive with `TS_AUTHKEY`. Use this only if you rebuild
-nodes often; with persistent state, A is simpler.
+After it joins, a consumed one-off key is useless; you can leave the variable or
+delete it (then also remove it from `.railway/railway.ts` if you deploy with
+IaC).
 
 ## 3. Verify
 
@@ -119,23 +95,29 @@ tailscale ping openclaw
 curl -fsS https://openclaw.<tailnet>.ts.net/healthz   # {"ok":true,"status":"live"}
 ```
 
-The first HTTPS request can take a few seconds while Tailscale issues the
-certificate. From a device the policy does not allow, the same `curl` should
-time out.
+The first HTTPS request can take 15 seconds or more while Tailscale issues the
+certificate (observed ≈15.6 s locally); later requests are fast. From a device
+the policy does not allow, the same `curl` should time out. In the container,
+the Gateway logs `[tailscale] serve enabled: https://openclaw.<tailnet>.ts.net/`
+when Serve is up.
 
 ## Operations
 
-- **Redeploys and restarts** keep the same node, address, and certificate:
-  state is on the volume and `TS_AUTH_ONCE` skips login.
-- **Re-keying the node.** Generate a new key (option A), set `TS_AUTHKEY`,
-  remove the old `openclaw` machine in the admin console, and redeploy. With
-  the old identity revoked, containerboot is no longer logged in and uses the new
-  key. **(live-unverified)**
-- **Node key expiry.** Tagged nodes don't expire by default. If you used option B
-  and didn't tag the node, disable key expiry or it will drop off the tailnet
-  after the tailnet's expiry period (180 days by default).
-- **Never enable Funnel** for this node. `tests/serve-config.test.sh` fails CI
-  if `serve.json` enables Funnel or switches to HTTP proxying.
+- **Redeploys and restarts** keep the same node, address, and certificate: state
+  is on the volume, and the entrypoint skips login when the node is already
+  logged in (verified).
+- **Inspecting Tailscale**: `railway ssh --service openclaw -- as-node tailscale status`.
+  OpenClaw's Serve route is a foreground claim held by the Gateway, so
+  `tailscale serve status` may show no persistent config while it is active.
+- **Re-keying the node.** Remove the `openclaw` machine in the admin console,
+  set a new `TS_AUTHKEY`, and redeploy. With the old identity revoked, the node
+  is logged out, and the entrypoint uses the new key. **(live-unverified)**
+- **Node key expiry.** Tagged nodes don't expire by default. If you didn't tag
+  the node, disable key expiry in the admin console or it will drop off the
+  tailnet after the tailnet's expiry period (180 days by default); the container
+  then refuses to start until it gets a new `TS_AUTHKEY`.
+- **Never enable Funnel** for this node. OpenClaw's Funnel mode would make the
+  Gateway public; the `CMD` pins `--tailscale serve`.
 - **Upgrading Tailscale.** Dependabot proposes new `tailscale/tailscale` tags for
-  `tailscale/Dockerfile`; CI re-checks `serve.json` against the new release's
-  types.
+  the `FROM … AS tailscale` line in the `Dockerfile`; the image test checks the
+  installed version matches the pin.

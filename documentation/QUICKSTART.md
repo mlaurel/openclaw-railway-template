@@ -9,8 +9,6 @@ You need:
   (`brew install railway`, then `railway login`).
 - A Tailscale tailnet with **MagicDNS** and
   [**HTTPS certificates**](https://tailscale.com/kb/1153/enabling-https) turned on.
-  Note your tailnet's DNS name (admin console → **DNS**), for example
-  `tail1234.ts.net`.
 - A model provider API key (Anthropic is shown below).
 
 ## 1. Get a Tailscale auth key
@@ -23,23 +21,25 @@ machines never expire and get only the access your policy grants them.
 ## 2. Deploy the template
 
 Open the [OpenClaw Private Gateway template](https://railway.com/deploy/openclaw-private-gateway)
-(or click **Deploy on Railway** in the [README](../README.md)) and fill in:
+(or click **Deploy on Railway** in the [README](../README.md)) and fill in the
+one variable it asks for:
 
 | Variable | Value |
 | --- | --- |
-| `TAILNET_DNS_NAME` | your tailnet's DNS name from the admin console's **DNS** page, for example `tail1234.ts.net` (no `https://`, no machine name) |
 | `TS_AUTHKEY` | the key from step 1 |
 
-The template fills in the rest: the Gateway token (`OPENCLAW_GATEWAY_TOKEN`)
-is generated, and `OPENCLAW_PUBLIC_ORIGIN` becomes
-`https://openclaw.<TAILNET_DNS_NAME>`. Wait for both
-services to turn green (≈4 minutes; the first build pulls a large image). A
-machine named `openclaw` then appears in your tailnet.
+The template generates the Gateway token (`OPENCLAW_GATEWAY_TOKEN`). Wait for
+the `openclaw` service to turn green (≈4 minutes; the first build pulls a large
+image). On first boot the container logs in to your tailnet with the key, and a
+machine named `openclaw` appears. After that, the node key on the volume logs
+it in; the auth key is never used again.
 
-If the name is already taken, Tailscale calls it `openclaw-1` and the origin no
-longer matches. Either rename the machine to `openclaw` in the admin console
-(after removing the old one), or change `OPENCLAW_PUBLIC_ORIGIN` on the
-`openclaw` service to `https://openclaw-1.<TAILNET_DNS_NAME>`.
+The Gateway is then at `https://openclaw.<your-tailnet>.ts.net/`. The first
+request takes about 15 seconds while Tailscale issues the certificate. If the
+name `openclaw` was already taken, the machine is `openclaw-1` and the address
+follows (`https://openclaw-1.<your-tailnet>.ts.net/`); nothing needs editing. To
+get the plain name back, remove the stale machine and rename this one in the
+admin console.
 
 ## 3. Link the CLI and open SSH
 
@@ -68,7 +68,7 @@ When that deploy is green:
 railway ssh --service openclaw -- openclaw onboard --non-interactive --accept-risk --skip-health \
   --mode local --auth-choice apiKey --secret-input-mode ref \
   --gateway-auth token --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
-  --gateway-bind lan --skip-channels --no-install-daemon
+  --gateway-bind loopback --skip-channels --no-install-daemon
 ```
 
 The Gateway restarts itself once to apply the result. Check that the agent
@@ -81,7 +81,14 @@ railway ssh --service openclaw -- openclaw agent --agent main --message "Reply w
 For another provider, set its key variable instead (for example
 `OPENAI_API_KEY`) and change `--auth-choice`; see `openclaw onboard --help`.
 
-## 5. Connect the macOS app
+## 5. Open the dashboard
+
+On a tailnet device, open `https://openclaw.<your-tailnet>.ts.net/`. It signs
+you in with your Tailscale identity: no token, no device approval. Anyone your
+Tailscale access policy lets reach the machine can do the same, so check the
+policy ([TAILSCALE.md](TAILSCALE.md)).
+
+## 6. Connect the macOS app
 
 Keep the Gateway token in your Keychain, then point the app at the Gateway:
 
@@ -97,7 +104,7 @@ security find-generic-password -s openclaw-railway-gateway-token -w | tr -d '\n'
 alongside it instead, use `openclaw-mac gateway add Railway --url https://openclaw.<your-tailnet>.ts.net --token-stdin`.
 In the app you can also do it by hand: **Connection… → Remote (another host)**.
 
-## 6. Approve the Mac
+## 7. Approve the Mac
 
 ```bash
 railway ssh --service openclaw -- openclaw devices list
@@ -109,13 +116,19 @@ node capabilities, which let the agent run commands on your Mac, including
 shell commands. Review them before approving; see
 [SECURITY.md](SECURITY.md#local-node-permissions-the-mac).
 
-## 7. Finish
+For a phone, run `railway ssh --service openclaw -- openclaw qr` and scan the
+code in the OpenClaw app; it carries `wss://openclaw.<your-tailnet>.ts.net`
+with full access.
+
+## 8. Finish
 
 - **Tailscale:** if you didn't tag the machine, disable key expiry on `openclaw`
   in the admin console, or it leaves your tailnet after 180 days.
 - **Telegram (optional):** see [DEPLOYMENT.md](DEPLOYMENT.md#10-connect-telegram).
-- **Backups:** each service → **Backups** → Daily.
+- **Backups:** `openclaw` → **Backups** → Daily. The volume also holds the
+  Tailscale node key.
 - **Audit:** `railway ssh --service openclaw -- openclaw security audit` should
-  report 0 critical and 0 warnings.
+  report 0 critical and one expected warning, `gateway.trusted_proxies_missing`
+  ([why](SECURITY.md#security-audit)).
 
 Something wrong? [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
