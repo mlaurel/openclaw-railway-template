@@ -49,4 +49,14 @@ if [ ! -e "$config_file" ] && [ ! -L "$config_file" ]; then
   echo "openclaw-railway: created $config_file from the baseline config"
 fi
 
+# Homebrew lives on the volume (/home/linuxbrew/.linuxbrew is a symlink here).
+# Copy the image's seed on first boot only; afterwards Homebrew and what it
+# installs belong to the volume. Not swept by the ownership repair above: the
+# brew wrapper always runs as node, and the prefix holds many files.
+homebrew_directory=/data/linuxbrew
+if [ ! -e "$homebrew_directory" ] && [ ! -L "$homebrew_directory" ]; then
+  cp -a /opt/homebrew-seed "$homebrew_directory"
+  echo "openclaw-railway: created $homebrew_directory from the image's Homebrew"
+fi
+
 exec setpriv --reuid=node --regid=node --init-groups -- "$@"

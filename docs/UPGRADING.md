@@ -109,6 +109,10 @@ lost in a rollback; the unmounted volume still has it if you need to recover
 something by hand. **(live-unverified: the restore flow follows Railway's backup
 docs.)**
 
+Tools you installed or updated on the volume (`~/.local`, Homebrew in
+`/data/linuxbrew`) are part of that volume state: an image rollback leaves them
+as they are, and a volume restore returns them to the backup's versions.
+
 Railway's **Rollback** button (redeploy a previous image) is only safe for
 releases that did not migrate state; read the release notes first.
 

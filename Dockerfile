@@ -44,12 +44,13 @@ RUN set -eu; \
     rm -rf /tmp/gh*; \
     gh --version
 
-# jq and tmux for the trello and tmux skills, from Debian stable. Not pinned to
-# exact versions: a Debian security update removes the previous version from the
-# mirror, so an exact pin would eventually break every build.
+# jq and tmux for the trello and tmux skills, plus procps and file, which
+# Homebrew needs, from Debian stable. Not pinned to exact versions: a Debian
+# security update removes the previous version from the mirror, so an exact pin
+# would eventually break every build.
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends jq tmux \
+ && apt-get install -y --no-install-recommends jq tmux procps file \
  && rm -rf /var/lib/apt/lists/* \
  && jq --version \
  && tmux -V
@@ -86,8 +87,10 @@ RUN set -eu; \
     ln -s "$codex_script" /usr/local/bin/codex; \
     codex --version
 
-# Claude Code for the coding-agent skill, pinned in tools/package-lock.json
-# (Dependabot proposes updates). Its postinstall script copies the native binary
+# Claude Code for the coding-agent skill: a pinned baseline in
+# tools/package-lock.json, so a fresh deploy works. `as-node claude install
+# stable` puts a self-updating copy on the volume that takes precedence (see
+# docs/TOOLS.md). Its postinstall script copies the native binary
 # for this architecture into place; tools/package.json approves only that
 # package's install script (npm 12 blocks dependency scripts by default).
 COPY tools/package.json tools/package-lock.json /opt/tools/
@@ -95,25 +98,59 @@ RUN npm ci --prefix /opt/tools --omit=dev --no-audit --no-fund \
  && ln -s /opt/tools/node_modules/.bin/claude /usr/local/bin/claude \
  && claude --version
 
+# Homebrew, for installing and updating tools at runtime. Its prefix must be
+# /home/linuxbrew/.linuxbrew for prebuilt bottles to pour, so that path is a
+# symlink to /data/linuxbrew on the volume, and the entrypoint copies this seed
+# there on first boot. After that, Homebrew and everything it installs live on
+# the volume and update themselves; the image only pins the starting point.
+# Installed as node (Homebrew refuses root), and run once so its portable Ruby
+# is vendored into the seed and first boot needs no network.
+RUN install -d -o node -g node /home/linuxbrew
+# hadolint ignore=DL3066
+USER node
+RUN git clone --depth 1 --branch 7.0.8 https://github.com/Homebrew/brew /home/linuxbrew/.linuxbrew/Homebrew \
+ && mkdir /home/linuxbrew/.linuxbrew/bin \
+ && ln -s ../Homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew \
+ && HOME=/tmp HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew vendor-install ruby \
+ && HOME=/tmp HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew --version \
+ && rm -rf /tmp/.cache
+# Back to root for the entrypoint, which drops to node itself.
+# hadolint ignore=DL3002,DL3066
+USER root
+RUN mv /home/linuxbrew/.linuxbrew /opt/homebrew-seed \
+ && ln -s /data/linuxbrew /home/linuxbrew/.linuxbrew
+
 COPY config/openclaw.seed.json /etc/openclaw-railway/openclaw.seed.json
 COPY scripts/entrypoint.sh /usr/local/bin/openclaw-railway-entrypoint
 # `railway ssh` opens a root shell. `as-node <command>` runs a command as the
 # Gateway's user, so tool logins (for example `as-node gog auth add …`) don't
-# leave root-owned files the agent can't read. The openclaw wrapper shadows
-# /usr/local/bin/openclaw on PATH and does the same automatically.
+# leave root-owned files the agent can't read. The openclaw and brew wrappers in
+# /usr/local/sbin (first on PATH) do the same automatically.
 COPY scripts/as-node.sh /usr/local/bin/as-node
 COPY scripts/openclaw-as-node.sh /usr/local/sbin/openclaw
+COPY scripts/brew-as-node.sh /usr/local/sbin/brew
 
 RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json \
- && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/bin/as-node /usr/local/sbin/openclaw \
+ && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/bin/as-node /usr/local/sbin/openclaw /usr/local/sbin/brew \
  && node /app/openclaw.mjs --version
 
 # HOME is on the volume, so tool logins and settings kept under ~ (gog's Google
-# tokens, Claude Code and Codex sessions, anything installed to ~/.local) survive
-# redeploys. DISABLE_AUTOUPDATER keeps Claude Code at the pinned version.
+# tokens, Claude Code and Codex sessions) survive redeploys. PATH order, first
+# match wins:
+#   /usr/local/sbin          openclaw and brew wrappers; the OpenClaw CLI always
+#                            matches the image's Gateway and can't be shadowed
+#   /data/home/.local/bin    your tools on the volume: npm -g, Claude Code's
+#                            self-updating native install
+#   /home/linuxbrew/...      Homebrew on the volume
+#   /usr/local/bin, ...      the image's pinned baseline
+# NPM_CONFIG_PREFIX sends `npm install -g` to the volume instead of root-owned
+# /usr/local.
 ENV HOME=/data/home \
-    PATH=/data/home/.local/bin:$PATH \
-    DISABLE_AUTOUPDATER=1
+    PATH=/usr/local/sbin:/data/home/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/home/node/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    NPM_CONFIG_PREFIX=/data/home/.local \
+    HOMEBREW_NO_ANALYTICS=1 \
+    HOMEBREW_NO_ENV_HINTS=1 \
+    HOMEBREW_CACHE=/tmp/homebrew
 
 # Replaces the base image's HEALTHCHECK, which would run OpenClaw code as root.
 # Railway ignores Docker health checks; this one is for local `docker run`.

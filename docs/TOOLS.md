@@ -1,7 +1,9 @@
 # Tools for skills
 
 Several bundled OpenClaw skills drive command-line tools. The image includes the
-ones that make sense on a server, pinned and checksum-verified:
+ones that make sense on a server as a pinned, checksum-verified **baseline**, so
+a fresh deploy works immediately. Every one of them can then be updated on the
+volume, where updates persist ([below](#keeping-tools-current)):
 
 | Tool | Version | Used by | Source |
 | --- | --- | --- | --- |
@@ -86,9 +88,44 @@ agent.
 so the `coding-agent` skill works with the key you onboarded with. To use a
 Claude subscription instead, run `as-node claude auth login` in a `railway ssh`
 shell. `codex` uses `OPENAI_API_KEY` when set, or `as-node codex login`.
-`DISABLE_AUTOUPDATER=1` keeps Claude Code at the pinned version.
+The image's copy is the pinned baseline; `as-node claude install stable` adds a
+self-updating copy on the volume ([below](#keeping-tools-current)).
 
-## Adding or upgrading a tool
+## Keeping tools current
+
+Tools resolve in this order (first match wins):
+
+1. `/usr/local/sbin`: the `openclaw` and `brew` wrappers. The OpenClaw CLI always
+   matches the running Gateway; it can't be shadowed or self-updated.
+2. `~/.local/bin` on the volume: Claude Code's native install, `npm install -g`.
+3. Homebrew on the volume (`/home/linuxbrew/.linuxbrew` → `/data/linuxbrew`).
+4. The image's baseline.
+
+So an update you install on the volume takes over from the image's copy and
+survives redeploys:
+
+| Tool | Update it with | Then |
+| --- | --- | --- |
+| Claude Code | `as-node claude install stable` (or `latest`) | updates itself |
+| Codex | `as-node npm install -g @openai/codex@latest` | rerun to update, or follow Codex's own prompt |
+| `gh`, `gog`, `jq`, `tmux` | `brew install gh gogcli jq tmux` | `brew upgrade` |
+| anything else | `brew install <formula>`, `as-node npm install -g <package>` | `brew upgrade`, `npm update -g` |
+
+Run these through `railway ssh --service openclaw -- …`; `brew` already runs as
+`node` without `as-node`. Homebrew pours prebuilt bottles (verified for
+`gogcli`). Some formulae also pull Homebrew's own glibc and libraries, a few
+hundred MB on the volume the first time. Homebrew updates its formula list
+when you install; `HOMEBREW_CACHE` is in `/tmp`, so downloads don't fill the
+volume.
+
+**What this layer gives up.** Tools on the volume aren't pinned: they change when
+you or the agent update them, not through a reviewed PR, and rolling back the
+image doesn't roll them back. To return to the baseline, remove the override:
+`as-node rm ~/.local/bin/claude`, `brew uninstall <formula>`, or
+`as-node npm uninstall -g <package>`. The agent can use the same commands, so
+it can install software too ([SECURITY.md](SECURITY.md#tools-in-the-image)).
+
+## Changing the image's baseline
 
 - **Pinned release binaries** (`gh`, `gog`): change the version and both
   checksums (amd64, arm64) in the `Dockerfile` `RUN` step, copying the checksums

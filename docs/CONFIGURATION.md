@@ -11,7 +11,9 @@ For a copyable list of the runtime variables, see [`.env.example`](../.env.examp
 | --- | --- | --- |
 | OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0de…` — the only version pin |
 | `HOME` | `Dockerfile` | `/data/home`, on the volume, so tool logins and settings under `~` persist. See [TOOLS.md](TOOLS.md). |
-| Skill tools | `Dockerfile`, `tools/package.json` | `gog`, `claude`, `codex`, `jq`, `tmux`; see [TOOLS.md](TOOLS.md). |
+| Skill tools | `Dockerfile`, `tools/package.json` | `gog`, `claude`, `codex`, `jq`, `tmux` as a pinned baseline; see [TOOLS.md](TOOLS.md). |
+| Homebrew | `Dockerfile` (seed), `/data/linuxbrew` | Homebrew 7.0.8 seeded onto the volume on first boot, then self-updating. `/home/linuxbrew/.linuxbrew` is a symlink to it. |
+| `PATH`, `NPM_CONFIG_PREFIX` | `Dockerfile` | `openclaw`/`brew` wrappers, then `~/.local/bin`, then Homebrew, then the image. `npm install -g` writes to `~/.local` on the volume. |
 | GitHub CLI | `Dockerfile` `RUN` step | `gh` 2.102.0, checksum-verified. Needed for **Settings → Profile → GitHub connections**; OpenClaw stores each connection under `/data/.openclaw/credentials/github/`, so connections persist. |
 | Tailscale version | `tailscale/Dockerfile` `FROM` line | `tailscale/tailscale:v1.102.5@sha256:c507…` |
 | `OPENCLAW_HOME` | `Dockerfile` | `/data` → state at `/data/.openclaw` |
@@ -89,8 +91,8 @@ is under `/data/.openclaw` (observed layout after onboarding):
 OAuth tokens (for OAuth-based providers) are stored in SQLite on this volume in
 plaintext. Treat the volume and its backups as credentials.
 
-`HOME` is `/data/home`, also on the volume, so command-line tools keep their
-logins and settings across redeploys. Not persisted: `/tmp`, including
+`HOME` is `/data/home` and Homebrew is `/data/linuxbrew`, both on the volume, so
+command-line tools keep their logins, settings, and updates across redeploys. Not persisted: `/tmp`, including
 OpenClaw's rolling file log (`/tmp/openclaw/openclaw-<date>.log`; the same
 output goes to stdout and Railway's logs).
 

@@ -156,6 +156,20 @@ check "every container process runs as uid 1000 (node)" \
 check "the gateway token does not appear in any process arguments" \
   '! docker top "$gateway" -eo pid,args | grep -F "$token"'
 
+log "updatable tools layer"
+check "Homebrew is seeded onto the volume on first boot" \
+  'docker logs "$gateway" 2>&1 | grep -F "created /data/linuxbrew from the image" && docker exec "$gateway" test -x /data/linuxbrew/bin/brew'
+check "brew runs from a root shell (as node) with the standard prefix" \
+  '[ "$(docker exec "$gateway" brew --prefix)" = /home/linuxbrew/.linuxbrew ]'
+check "npm install -g targets the volume" \
+  '[ "$(docker exec "$gateway" as-node npm config get prefix)" = /data/home/.local ]'
+docker exec "$gateway" as-node sh -c 'mkdir -p "$HOME/.local/bin" && for tool in gog openclaw; do printf "#!/bin/sh\necho volume-copy\n" > "$HOME/.local/bin/$tool"; chmod +x "$HOME/.local/bin/$tool"; done'
+check "a tool on the volume takes precedence over the image's copy" \
+  '[ "$(docker exec "$gateway" as-node sh -c "command -v gog")" = /data/home/.local/bin/gog ]'
+check "the OpenClaw CLI can't be shadowed from the volume" \
+  '[ "$(docker exec "$gateway" as-node sh -c "command -v openclaw")" = /usr/local/sbin/openclaw ]'
+docker exec "$gateway" as-node rm -f /data/home/.local/bin/gog /data/home/.local/bin/openclaw
+
 log "security audit"
 # Prints "<severity> <checkId>" for every critical or warning finding.
 audit_problems() {
@@ -240,6 +254,8 @@ check "OpenClaw did not detect a clobbered config" \
   '! docker exec "$gateway" sh -c "ls /data/.openclaw | grep clobbered"'
 check "root-owned files are handed back to node on restart" \
   '[ "$(docker exec "$gateway" stat -c %U /data/.openclaw/written-by-root)" = node ] && [ "$(docker exec "$gateway" stat -c %U /data/home/written-by-root)" = node ]'
+check "Homebrew survives a restart and isn't seeded again" \
+  'docker exec "$gateway" brew --version && [ "$(docker logs "$gateway" 2>&1 | grep -c "created /data/linuxbrew")" = 1 ]'
 check "files in HOME survive a restart" \
   '[ "$(docker exec "$gateway" cat /data/home/persist-check)" = kept ]'
 check "the paired node is still paired after the restart" \

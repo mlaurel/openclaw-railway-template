@@ -143,7 +143,9 @@ widen what the agent can do on that device.
 The image includes `gh`, `gog`, `claude`, `codex`, `jq`, and `tmux` so bundled
 skills work ([TOOLS.md](TOOLS.md)). Once you log one in, the agent can use it
 with that account: `gog` reaches your mailbox, calendar, and Drive; `gh` and the
-coding agents can push code. That makes prompt injection more consequential.
+coding agents can push code. The agent can also install and update software on
+the volume with `brew` and `npm install -g`; those installs persist and aren't
+pinned or reviewed. All of this makes prompt injection more consequential.
 Keep `tools.exec.mode: "ask"` for agents that read untrusted content, log in
 only the tools you use, and prefer narrowly scoped credentials (for example, only
 the Google services you need).
