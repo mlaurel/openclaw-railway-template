@@ -133,9 +133,27 @@ if [ -z "$without_tailscale" ]; then
       fail "Tailscale login failed; see the error above. An auth key is single-use unless created as reusable, and it expires."
     fi
     rm -f "$key_file"
-    echo "openclaw-railway: logged in to Tailscale as $TS_HOSTNAME"
+    logged_in=1
   fi
 
+  # The assigned name can differ from TS_HOSTNAME: Tailscale adds a suffix
+  # (openclaw-1) when the tailnet already has the name, and normalizes names that
+  # aren't valid DNS labels. Report the name it actually assigned, without
+  # guessing which of the two happened.
+  dns_name="$(as_node tailscale status --json 2>/dev/null | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => (input += chunk)).on("end", () => {
+      try { console.log(JSON.parse(input).Self.DNSName.replace(/\.$/, "")); } catch { console.log(""); }
+    });')"
+  machine_name="${dns_name%%.*}"
+  if [ -n "${logged_in:-}" ]; then
+    if [ -n "$machine_name" ] && [ "$machine_name" != "$TS_HOSTNAME" ]; then
+      echo "openclaw-railway: logged in to Tailscale as $machine_name (asked for $TS_HOSTNAME)"
+    else
+      echo "openclaw-railway: logged in to Tailscale as ${machine_name:-$TS_HOSTNAME}"
+    fi
+  fi
+  [ -z "$dns_name" ] || echo "openclaw-railway: the Gateway will be at https://$dns_name/"
 fi
 unset TS_AUTHKEY
 

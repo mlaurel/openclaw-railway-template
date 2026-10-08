@@ -31,6 +31,7 @@ network="$run_id-network"
 gateway="$run_id-gateway"
 watchdog="$run_id-watchdog"
 live="$run_id-live"
+live_twin="$run_id-live-twin"
 live_hostname="openclaw-test-$$"
 failures=0
 
@@ -46,9 +47,12 @@ check() {
 }
 
 cleanup() {
+  # Log the live machines out so they leave the tailnet now, not when the
+  # ephemeral-node timeout removes them.
   docker exec "$live" as-node tailscale logout >/dev/null 2>&1 || true
-  docker rm -f "$gateway" "$watchdog" "$live" >/dev/null 2>&1 || true
-  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-live-state" >/dev/null 2>&1 || true
+  docker exec "$live_twin" as-node tailscale logout >/dev/null 2>&1 || true
+  docker rm -f "$gateway" "$watchdog" "$live" "$live_twin" >/dev/null 2>&1 || true
+  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-live-state" "$run_id-live-twin-state" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -414,6 +418,8 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   live_name="$(tailscale_field "$live" DNSName 2>/dev/null || true)"
   check "OpenClaw enables Serve at https://$live_name/" \
     'docker logs "$live" 2>&1 | grep -F "serve enabled: https://$live_name/"'
+  check "the entrypoint logs the Gateway's tailnet address" \
+    'docker logs "$live" 2>&1 | grep -F "the Gateway will be at https://$live_name/"'
   check "the auth key is not in the Gateway's environment" \
     '! docker exec -u node "$live" sh -c "tr \"\\0\" \"\\n\" < /proc/\$(pgrep -f openclaw-gateway | head -1)/environ" | grep -F TS_AUTHKEY'
   check "the auth key is not left in a file" '! docker exec "$live" grep -rlF "$TAILSCALE_TEST_AUTHKEY" /tmp /data'
@@ -443,6 +449,25 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     check "the temporary :8443 route ends with gog-login" \
       '[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://$live_name:8443/oauth2/callback")" = 000 ]'
   fi
+  # A second machine asking for the same name, in capitals, gets a normalized,
+  # suffixed name from Tailscale. The entrypoint must report the name it got and
+  # the one it asked for, without claiming why they differ.
+  twin_requested="$(printf '%s' "$live_hostname" | tr '[:lower:]' '[:upper:]')"
+  docker run -d --name "$live_twin" -v "$run_id-live-twin-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
+    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$twin_requested" "$image" >/dev/null
+  attempt=0
+  until docker logs "$live_twin" 2>&1 | grep -qE "serve enabled|serve failed|login failed" || [ "$attempt" -ge 90 ]; do
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  twin_name="$(tailscale_field "$live_twin" DNSName 2>/dev/null || true)"
+  twin_machine="${twin_name%%.*}"
+  check "a taken, capitalized hostname is reported as the name Tailscale assigned ($twin_machine)" \
+    '[ "$twin_machine" != "$live_hostname" ] && [ -n "$twin_machine" ] && docker logs "$live_twin" 2>&1 | grep -F "logged in to Tailscale as $twin_machine (asked for $twin_requested)" && ! docker logs "$live_twin" 2>&1 | grep -F "already taken"'
+  check "the suffixed machine logs its own address and serves there" \
+    'docker logs "$live_twin" 2>&1 | grep -F "the Gateway will be at https://$twin_name/" && docker logs "$live_twin" 2>&1 | grep -F "serve enabled: https://$twin_name/"'
+  docker exec "$live_twin" as-node tailscale logout >/dev/null 2>&1 || true
+  docker rm -f "$live_twin" >/dev/null 2>&1 || true
   docker restart "$live" >/dev/null
   attempt=0
   until [ "$(docker logs "$live" 2>&1 | grep -c "serve enabled")" -ge 2 ] || [ "$attempt" -ge 60 ]; do
@@ -451,6 +476,8 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   done
   check "after a restart, the saved login is reused (no second login)" \
     '[ "$(docker logs "$live" 2>&1 | grep -c "logged in to Tailscale")" = 1 ] && [ "$(docker logs "$live" 2>&1 | grep -c "serve enabled")" = 2 ]'
+  check "every boot logs the Gateway's address, not only the first" \
+    '[ "$(docker logs "$live" 2>&1 | grep -c "the Gateway will be at https://$live_name/")" = 2 ]'
   docker exec -u node "$live" sh -c 'kill -9 "$(pgrep -x tailscaled)"' || true
   attempt=0
   until [ "$(docker inspect -f '{{.State.Running}}' "$live")" = false ] || [ "$attempt" -ge 30 ]; do
