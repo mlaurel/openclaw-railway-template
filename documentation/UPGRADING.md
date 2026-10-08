@@ -204,7 +204,7 @@ deployment on 2026-10-08, in this order; the Gateway was unreachable for about
    you've verified the result), then remove the old `openclaw` machine in the
    Tailscale admin console. Otherwise the new container registers as
    `openclaw-1` and clients configured for `openclaw.<tailnet>.ts.net` stop
-   connecting. Expect `logged in to Tailscale as openclaw` and
+   connecting. If you see `logged in to Tailscale as openclaw-1 (openclaw was already taken in this tailnet)`, the old machine was still registered. Expect `logged in to Tailscale as openclaw` and
    `[tailscale] serve enabled: https://openclaw.<tailnet>.ts.net/` in the new
    deployment's logs. A config with many plugins took about 2 minutes to pass
    the health check on first boot.

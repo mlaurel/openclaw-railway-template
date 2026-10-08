@@ -28,6 +28,8 @@ one variable it asks for:
 | --- | --- |
 | `TS_AUTHKEY` | the key from step 1 |
 
+<img src="images/template-variable.png" width="880" alt="The template page's Template Content panel: one openclaw service from stevekinney/openclaw-railway-template, with one required variable, TS_AUTHKEY.">
+
 The template generates the Gateway token (`OPENCLAW_GATEWAY_TOKEN`). Wait for
 the `openclaw` service to turn green (≈4 minutes; the first build pulls a large
 image). On first boot the container logs in to your tailnet with the key, and a
@@ -40,6 +42,13 @@ name `openclaw` was already taken, the machine is `openclaw-1` and the address
 follows (`https://openclaw-1.<your-tailnet>.ts.net/`); nothing needs editing. To
 get the plain name back, remove the stale machine and rename this one in the
 admin console.
+
+The deploy log names the address either way:
+
+```
+openclaw-railway: logged in to Tailscale as openclaw-1 (openclaw was already taken in this tailnet)
+openclaw-railway: the Gateway will be at https://openclaw-1.<your-tailnet>.ts.net/
+```
 
 ## 3. Link the CLI and open SSH
 
@@ -88,6 +97,10 @@ you in with your Tailscale identity: no token, no device approval. Anyone your
 Tailscale access policy lets reach the machine can do the same, so check the
 policy ([TAILSCALE.md](TAILSCALE.md)).
 
+If you open it before step 4, it starts on **Model Setup**, because no model is configured yet:
+
+<img src="images/dashboard-model-setup.png" width="800" alt="The OpenClaw dashboard on a new Gateway, signed in through the tailnet, showing Settings → Model Setup with Connect provider and the Claude Code and Codex CLIs detected.">
+
 ## 6. Connect the macOS app
 
 Keep the Gateway token in your Keychain, then point the app at the Gateway:
@@ -102,6 +115,7 @@ security find-generic-password -s openclaw-railway-gateway-token -w | tr -d '\n'
 
 `primary set` replaces the app's current primary connection. To add the Gateway
 alongside it instead, use `openclaw-mac gateway add Railway --url https://openclaw.<your-tailnet>.ts.net --token-stdin`.
+It returns right away with the connection `disconnected` until you approve the Mac in step 7; then run `openclaw-mac gateway reconnect Railway`.
 In the app you can also do it by hand: **Connection… → Remote (another host)**.
 
 ## 7. Approve the Mac
@@ -110,6 +124,10 @@ In the app you can also do it by hand: **Connection… → Remote (another host)
 railway ssh --service openclaw -- openclaw devices list
 railway ssh --service openclaw -- openclaw devices approve <requestId>   # each pending request from your Mac
 ```
+
+Or approve it in the dashboard: **Settings → Devices**, then **Approve** next to your Mac under **Pending approval**.
+
+<img src="images/dashboard-devices-pending.png" width="800" alt="The dashboard's Devices settings with one Mac under Pending approval, with Approve and Reject buttons, above the Gateway's own entry under Paired devices.">
 
 The app connects within a few seconds. It may then ask you to approve its own
 node capabilities, which let the agent run commands on your Mac, including

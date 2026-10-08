@@ -123,12 +123,13 @@ Expect, in order:
 
 - `openclaw-railway: created /data/.openclaw/openclaw.json from the baseline config`
 - `openclaw-railway: logged in to Tailscale as openclaw`
+- `openclaw-railway: the Gateway will be at https://openclaw.<your-tailnet>.ts.net/` (logged on every start)
 - Doctor output, then `[tailscale] serve enabled: https://openclaw.<your-tailnet>.ts.net/`
 - `[gateway] http server listening`
 
 Railway marks the deploy healthy once `/startupz` returns 200 through the health
 relay (≈3 minutes the first time, mostly pulling the base image). A machine
-named `openclaw` is now in your tailnet. From any tailnet device:
+named `openclaw` is now in your tailnet. If the tailnet already had one, Tailscale names this machine `openclaw-1`, the login line says `logged in to Tailscale as openclaw-1 (openclaw was already taken in this tailnet)`, and the address follows; use the address from the `the Gateway will be at` line. From any tailnet device:
 
 ```bash
 curl -fsS https://openclaw.<your-tailnet>.ts.net/healthz   # {"ok":true,"status":"live"}

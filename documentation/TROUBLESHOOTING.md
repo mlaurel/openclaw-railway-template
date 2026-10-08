@@ -112,7 +112,8 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 - SSH sessions receive the service's Railway variables (verified on a live
   deployment), so the CLI authenticates to the Gateway without extra setup.
 - `Host key verification failed`: `ssh.railway.com` isn't in `~/.ssh/known_hosts`.
-  See the SSH note under [Prerequisites](DEPLOYMENT.md#prerequisites).
+  See the SSH note under [Prerequisites](DEPLOYMENT.md#prerequisites). Where no prompt can be answered (a script or an agent), `ssh-keyscan ssh.railway.com >> ~/.ssh/known_hosts` makes the same trust-on-first-use decision.
+- `{"status":"no_ssh_key", …}` although `railway ssh keys list` shows your key as registered: no key was offered on the connection, usually because the key has a passphrase and isn't loaded in the SSH agent (`ssh-add -l` says `The agent has no identities`). Load it with `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` on macOS (`ssh-add ~/.ssh/id_ed25519` elsewhere). Until then, approve devices from the dashboard (**Settings → Devices**).
 - `No registered SSH keys found`: `railway ssh keys add --key ~/.ssh/id_ed25519.pub`.
   (`railway ssh keys github` can fail with "You do not have access to this
   resource" when Railway's GitHub integration lacks access.)
