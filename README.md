@@ -1,5 +1,7 @@
 # OpenClaw on Railway
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/openclaw-private-gateway?utm_medium=integration&utm_source=button&utm_campaign=openclaw-private-gateway)
+
 A minimal Railway deployment of the [OpenClaw](https://openclaw.ai) Gateway,
 reachable only through Tailscale.
 

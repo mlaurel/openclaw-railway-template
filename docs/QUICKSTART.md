@@ -22,7 +22,8 @@ machines never expire and get only the access your policy grants them.
 
 ## 2. Deploy the template
 
-Click **Deploy on Railway** in the [README](../README.md) and fill in:
+Open the [OpenClaw Private Gateway template](https://railway.com/deploy/openclaw-private-gateway)
+(or click **Deploy on Railway** in the [README](../README.md)) and fill in:
 
 | Variable | Value |
 | --- | --- |
