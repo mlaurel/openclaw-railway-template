@@ -116,13 +116,27 @@ as they are, and a volume restore returns them to the backup's versions.
 Railway's **Rollback** button (redeploy a previous image) is only safe for
 releases that did not migrate state; read the release notes first.
 
-## GitHub CLI upgrades
+## Tool upgrades
 
-`gh` is downloaded in a `Dockerfile` `RUN` step, which Dependabot doesn't track.
-To upgrade, change `gh_version` and both checksums, copied from that release's
-`gh_<version>_checksums.txt` (`gh release download v<version> -R cli/cli -p 'gh_*_checksums.txt'`).
-The build fails if a checksum doesn't match, and `tests/image.test.sh` checks
-that `gh` runs.
+The image's skill tools are a baseline; you can also update them on the volume
+without a deploy ([TOOLS.md](TOOLS.md#keeping-tools-current)). To move the
+baseline itself:
+
+- **`gh`, `gog`**: downloaded in `Dockerfile` `RUN` steps, which Dependabot
+  doesn't track. Change the version and both checksums, copied from the
+  release's checksums file (for `gh`:
+  `gh release download v<version> -R cli/cli -p 'gh_*_checksums.txt'`). The
+  build fails if a checksum doesn't match.
+- **Claude Code**: Dependabot proposes updates to `tools/package-lock.json`;
+  merging one redeploys.
+- **Codex**: follows OpenClaw's own pin, so it moves with OpenClaw upgrades.
+- **Debian packages** (`jq`, `tmux`, ImageMagick): not pinned; every rebuild
+  installs Debian's current security updates. Redeploy periodically to pick
+  them up.
+- **Homebrew**: the `Dockerfile` pins the seed copied onto a new volume. An
+  existing volume's Homebrew updates itself and ignores the seed.
+
+`tests/image.test.sh` checks that each tool runs.
 
 ## Tailscale upgrades
 

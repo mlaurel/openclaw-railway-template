@@ -17,9 +17,9 @@ reachable only through Tailscale.
 - **All state on one volume** at `/data`: OpenClaw's state in `/data/.openclaw`
   (migrated by OpenClaw's own Doctor on every start), plus the home directory
   and Homebrew, so tool logins and updates survive redeploys.
-- **Tools for skills included.** `gh`, `gog`, Claude Code, Codex, `jq`, and
-  `tmux` ship as a pinned baseline; Homebrew and `npm install -g` add or update
-  tools on the volume.
+- **Tools for skills included.** `gh`, `gog`, Claude Code, Codex, `jq`, `tmux`,
+  and ImageMagick (for iPhone HEIC photos) ship as a pinned baseline; Homebrew
+  and `npm install -g` add or update tools on the volume.
 
 ```mermaid
 flowchart LR

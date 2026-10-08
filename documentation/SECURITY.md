@@ -146,6 +146,12 @@ with that account: `gog` reaches your mailbox, calendar, and Drive; `gh` and the
 coding agents can push code. The agent can also install and update software on
 the volume with `brew` and `npm install -g`; those installs persist and aren't
 pinned or reviewed. All of this makes prompt injection more consequential.
+
+ImageMagick parses images that anyone who can message the agent sends, but
+only formats OpenClaw's built-in decoder can't read (such as HEIC). Debian's
+default ImageMagick policy blocks the riskiest decoders (PostScript, PDF, XPS,
+URL fetches). Debian security fixes reach the image when it is rebuilt, so
+redeploy periodically even without an OpenClaw upgrade.
 Keep `tools.exec.mode: "ask"` for agents that read untrusted content, log in
 only the tools you use, and prefer narrowly scoped credentials (for example, only
 the Google services you need).

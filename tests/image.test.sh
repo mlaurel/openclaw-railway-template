@@ -107,6 +107,17 @@ check "the GitHub CLI is installed for GitHub connections and runs as node" \
 for tool_check in "gog --version" "jq --version" "tmux -V" "codex --version" "claude --version"; do
   check "$tool_check runs as node" 'docker run --rm --user node --entrypoint sh "$image" -c "$tool_check"'
 done
+# OpenClaw's image processor (Rastermill) can't decode HEIC itself and falls
+# back to ImageMagick. tests/fixtures/gradient.heic is a generated 64x64 image.
+check "OpenClaw's image processor converts an iPhone HEIC photo to JPEG" \
+  'docker run --rm --user node -v "$PWD/tests/fixtures:/fixtures:ro" --entrypoint sh "$image" -c '"'"'
+    rastermill="$(find /app/node_modules/.pnpm -path "*/rastermill@*/node_modules/rastermill/dist/index.js" -print -quit)"
+    node --input-type=module -e "
+      const { readFileSync } = await import(\"node:fs\");
+      const { encode } = await import(process.argv[1]);
+      const image = await encode(readFileSync(\"/fixtures/gradient.heic\"), { format: \"jpeg\", maxSide: 64 });
+      if (image.mimeType !== \"image/jpeg\" || image.width !== 64) process.exit(1);
+    " "$rastermill"'"'"''
 
 log "no secrets in the images"
 for candidate in "$image" "$tailscale_image"; do

@@ -12,6 +12,11 @@ volume, where updates persist ([below](#keeping-tools-current)):
 | `claude` | 2.1.285 | `coding-agent` | npm, `tools/package-lock.json` |
 | `codex` | follows OpenClaw (0.158.0 in 2026.9.8) | `coding-agent` | already in the OpenClaw image |
 | `jq`, `tmux` | Debian stable | `trello`, `tmux` | apt, `Dockerfile` |
+| ImageMagick, libheif | Debian stable | OpenClaw's image processing: HEIC/HEIF photos (iPhone) | apt, `Dockerfile` |
+
+`ffmpeg` is not included (it adds ≈370 MB). OpenClaw needs it only to convert
+voice notes for WhatsApp and Feishu and for Discord voice channels; Telegram
+doesn't need it. If you use those, `brew install ffmpeg` (untested here).
 
 Skills for macOS (Apple Notes, Reminders, Bear, Things, Peekaboo) run on your
 Mac through the paired app, not here. Skills for devices on your home network

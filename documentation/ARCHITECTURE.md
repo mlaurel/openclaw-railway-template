@@ -42,7 +42,7 @@ skills need:
   cannot leave root-owned state.
 - `config/openclaw.seed.json` is the baseline config (below).
 - A pinned baseline of skill tools (`gh`, `gog`, Claude Code, Codex, `jq`,
-  `tmux`) and a Homebrew seed, with `HOME` on the volume so logins and updates
+  `tmux`), ImageMagick for HEIC photos, and a Homebrew seed, with `HOME` on the volume so logins and updates
   persist. See [TOOLS.md](TOOLS.md).
 
 After the privilege drop, the process tree is exactly the stock image:

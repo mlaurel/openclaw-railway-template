@@ -11,7 +11,7 @@ For a copyable list of the runtime variables, see [`.env.example`](../.env.examp
 | --- | --- | --- |
 | OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0de…` — the only version pin |
 | `HOME` | `Dockerfile` | `/data/home`, on the volume, so tool logins and settings under `~` persist. See [TOOLS.md](TOOLS.md). |
-| Skill tools | `Dockerfile`, `tools/package.json` | `gog`, `claude`, `codex`, `jq`, `tmux` as a pinned baseline; see [TOOLS.md](TOOLS.md). |
+| Skill tools | `Dockerfile`, `tools/package.json` | `gog`, `claude`, `codex`, `jq`, `tmux`, ImageMagick as a pinned baseline; see [TOOLS.md](TOOLS.md). |
 | Homebrew | `Dockerfile` (seed), `/data/linuxbrew` | Homebrew 7.0.8 seeded onto the volume on first boot, then self-updating. `/home/linuxbrew/.linuxbrew` is a symlink to it. |
 | `PATH`, `NPM_CONFIG_PREFIX` | `Dockerfile` | `openclaw`/`brew` wrappers, then `~/.local/bin`, then Homebrew, then the image. `npm install -g` writes to `~/.local` on the volume. |
 | GitHub CLI | `Dockerfile` `RUN` step | `gh` 2.102.0, checksum-verified. Needed for **Settings → Profile → GitHub connections**; OpenClaw stores each connection under `/data/.openclaw/credentials/github/`, so connections persist. |

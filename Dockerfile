@@ -44,16 +44,21 @@ RUN set -eu; \
     rm -rf /tmp/gh*; \
     gh --version
 
-# jq and tmux for the trello and tmux skills, plus procps and file, which
-# Homebrew needs, from Debian stable. Not pinned to exact versions: a Debian
-# security update removes the previous version from the mirror, so an exact pin
-# would eventually break every build.
-# hadolint ignore=DL3008
+# From Debian stable: jq and tmux for the trello and tmux skills; procps and
+# file, which Homebrew needs; and ImageMagick with libheif, which OpenClaw's
+# image processor falls back to for formats its built-in decoder can't read,
+# such as iPhone HEIC photos (without it they fail with "Image processor
+# unavailable"). Not pinned to exact versions: a Debian security update removes
+# the previous version from the mirror, so an exact pin would eventually break
+# every build. (The grep fails the build if ImageMagick can't read HEIC, so the
+# pipe needs no pipefail.)
+# hadolint ignore=DL3008,DL4006
 RUN apt-get update \
- && apt-get install -y --no-install-recommends jq tmux procps file \
+ && apt-get install -y --no-install-recommends jq tmux procps file imagemagick libheif1 \
  && rm -rf /var/lib/apt/lists/* \
  && jq --version \
- && tmux -V
+ && tmux -V \
+ && convert -list format | grep -E "^ *HEIC[*] +HEIC +r"
 
 # gog, the Google Workspace CLI for the gog skill. Pinned release, verified
 # against the project's published checksums.
