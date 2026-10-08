@@ -122,7 +122,14 @@ non-interactively), webhooks turned on as above, and `gcloud` on your machine.
    openclaw config set hooks.gmail '{"account":"you@gmail.com","label":"INBOX","topic":"projects/<project-id>/topics/gog-gmail-watch","subscription":"gog-gmail-watch-push","pushToken":"${OPENCLAW_GMAIL_PUSH_TOKEN}","serve":{"bind":"127.0.0.1","port":8788,"path":"/gmail-pubsub"},"tailscale":{"mode":"off"}}' --strict-json
    ```
 
-   Then redeploy (the watcher starts with the Gateway). Keep
+   OpenClaw applies `hooks.gmail` without a restart: the logs show
+   `watch started for <account>` and `watch: listening on 127.0.0.1:8788/gmail-pubsub`.
+   If an earlier setup already created the topic and a subscription (for
+   example pointing at a Mac through Funnel), repoint it instead of creating
+   new ones, so each email is processed once:
+   `gcloud pubsub subscriptions modify-push-config gog-gmail-watch-push --push-endpoint=…`.
+   Then remove the old Funnel route on that machine
+   (`tailscale funnel --https=443 --set-path=/gmail-pubsub off`). Keep
    `hooks.gmail.tailscale.mode` at `off`: OpenClaw's own Gmail setup would run
    Tailscale Funnel on port 443 and publish the dashboard, so the entrypoint
    refuses to start with any other value. Don't run `openclaw webhooks gmail
