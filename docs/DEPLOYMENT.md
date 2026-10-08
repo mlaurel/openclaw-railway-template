@@ -1,25 +1,30 @@
 # Deployment
 
-From a fork of this repository to a working, private OpenClaw Gateway that the
-macOS app and Telegram can use. Every step is a command you can paste.
+Two ways to deploy:
 
-Steps marked **(live-unverified)** have not yet been run against a real Railway
-project or tailnet; see [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
+- **Railway template**: one click plus two variables. Follow
+  [QUICKSTART.md](QUICKSTART.md). Use this unless you need to change the code.
+- **From your fork, with Infrastructure as Code**: this page. Use it when you
+  maintain your own fork (`.railway/railway.ts` then describes the project).
+
+Both end at the same place: a Gateway reachable only through your tailnet, with
+the macOS app paired and, optionally, Telegram. Everything on this page was run
+against a live Railway project on 2026-10-08 except where marked.
 
 ## Prerequisites
 
-- A Railway account on a paid plan (volumes larger than 0.5 GB), with the
-  Railway GitHub app allowed to read your fork.
-- [Railway CLI](https://docs.railway.com/cli) **5.42.1 or newer** (tested help
-  output from 5.63.4), logged in with `railway login`, and an SSH key registered
-  with Railway: `railway ssh keys add --key ~/.ssh/id_ed25519.pub`. Railway
-  publishes no host-key fingerprints for `ssh.railway.com` and rotates keys
-  across hosts, so the first connection is trust-on-first-use: accept the prompt
-  once in an interactive terminal, or add a scanned key to `known_hosts` yourself.
+- A Railway account on a paid plan (volumes larger than 0.5 GB). Public forks
+  build without the Railway GitHub app; private forks need it.
+- [Railway CLI](https://docs.railway.com/cli) **5.42.1 or newer** (`brew install railway`),
+  logged in with `railway login`, plus an SSH key registered with Railway:
+  `railway ssh keys add --key ~/.ssh/id_ed25519.pub`. Railway publishes no
+  host-key fingerprints for `ssh.railway.com` and rotates keys across hosts, so
+  the first connection is trust-on-first-use: accept the prompt once in an
+  interactive terminal.
 - Node.js 24+ (to evaluate `.railway/railway.ts`).
-- A Tailscale tailnet where you can edit the access policy, with
-  [HTTPS certificates enabled](https://tailscale.com/kb/1153/enabling-https).
-- `openssl`.
+- A Tailscale tailnet with MagicDNS and
+  [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled.
+  Note its DNS name (admin console → **DNS**), for example `tail1234.ts.net`.
 
 ## 1. Create the Railway project
 
@@ -37,7 +42,7 @@ requires; **do not reuse an environment created before 2025-10-16**
 
 **Choose the region now.** `.railway/railway.ts` places both services and both
 volumes in `us-west2` unless you set `OPENCLAW_RAILWAY_REGION` (or edit the
-`region` constant) before the first apply; region IDs are listed in
+`region` constant) before the first apply; region IDs are in
 [Railway's regions docs](https://docs.railway.com/deployments/regions). Moving
 later means migrating the volumes: `railway config apply` reports a volume
 region change but does not move the volume. Change the services' region instead
@@ -48,8 +53,7 @@ the region in `railway.ts` so plans stay clean.
 ## 2. Create both services and their volumes
 
 Point `.railway/railway.ts` at your fork: edit `sourceRepository` in the file
-(recommended, since it then travels with your fork), or export the variable for
-this shell:
+(it then travels with your fork), or export the variable for this shell:
 
 ```bash
 export OPENCLAW_RAILWAY_REPOSITORY=<you>/<your-fork>
@@ -57,13 +61,14 @@ railway config plan
 railway config apply
 ```
 
-The plan should show two services (`openclaw`, `tailscale`) and two volumes
+The plan shows two services (`openclaw`, `tailscale`), two volumes
 (`openclaw-state` at `/data`, `tailscale-state` at `/var/lib/tailscale`), and no
-domains. **(live-unverified)**
+domains.
 
-Railway builds both services immediately. The `openclaw` deployment fails until
-step 3 (the entrypoint refuses to start without a Gateway token), and `tailscale`
-stays unhealthy until step 7. Both failures are expected.
+Railway builds both services immediately. Both first deploys fail, as expected:
+`openclaw` refuses to start until step 3 sets its variables, and `tailscale` has
+no auth key until step 7. With no key, `tailscale` prints a login URL in its
+deploy logs and fails its 300-second health check.
 
 <details>
 <summary>Dashboard equivalent (no CLI)</summary>
@@ -73,29 +78,40 @@ Create two services from your GitHub fork, named exactly `openclaw` and
 
 | Setting | `openclaw` | `tailscale` |
 | --- | --- | --- |
-| Builder / Dockerfile path | Dockerfile / `Dockerfile` | Dockerfile / `tailscale/Dockerfile` |
+| Root directory | (repository root) | `tailscale` |
+| Builder | Dockerfile | Dockerfile |
 | Volume mount path | `/data` | `/var/lib/tailscale` |
+| Region | same for both services | same for both services |
 | Healthcheck path / timeout | `/startupz` / 600 s | `/healthz` / 300 s |
 | Restart policy | Always | Always |
 | Replicas | 1 | 1 |
 | Draining seconds | 330 | default |
-| Variable `PORT` | `18789` | `9002` |
+| `PORT` variable | **none** (Railway's default, 8080, is what both listen on) | **none** |
 | Public networking | none | none |
 
 </details>
 
-## 3. Configure Gateway authentication
+## 3. Configure the Gateway
 
-Generate a token and pipe it straight to Railway, so it never lands in shell
-history or process arguments. The token is printed once: save it in your
-password manager, because the macOS app needs it in step 8.
+Two variables. The token authenticates every client; the origin is the address
+you'll reach the Gateway at, which OpenClaw also uses as its browser-origin
+allowlist (the entrypoint refuses to start without it).
+
+On macOS, generate the token straight into your Keychain and pipe it to Railway,
+so it never appears on screen or in your shell history:
 
 ```bash
-openssl rand -hex 32 | tee /dev/tty | tr -d '\n' | railway variable set OPENCLAW_GATEWAY_TOKEN --stdin --service openclaw
+security add-generic-password -U -a openclaw-railway -s openclaw-railway-gateway-token -w "$(openssl rand -hex 32)"
+security find-generic-password -s openclaw-railway-gateway-token -w | tr -d '\n' | \
+  railway variable set OPENCLAW_GATEWAY_TOKEN --stdin --service openclaw --skip-deploys
+railway variable set OPENCLAW_PUBLIC_ORIGIN=https://openclaw.<your-tailnet>.ts.net --service openclaw
 ```
 
-Seal it in the dashboard (Variables → ⋯ → Seal) so it can never be read back.
-Setting the variable triggers a deploy. Wait for it:
+(Elsewhere: `openssl rand -hex 32 | tee /dev/tty | tr -d '\n' | railway variable set OPENCLAW_GATEWAY_TOKEN --stdin --service openclaw`,
+and save the printed value in a password manager.) Seal the token in the
+dashboard (Variables → ⋯ → Seal) if you don't need to read it back.
+
+The second command deploys. Watch it:
 
 ```bash
 railway logs --service openclaw
@@ -103,36 +119,26 @@ railway logs --service openclaw
 
 Expect `openclaw-railway: created /data/.openclaw/openclaw.json from the baseline config`,
 Doctor output, then `[gateway] http server listening`. Railway marks the deploy
-healthy when `/startupz` returns 200.
+healthy once `/startupz` returns 200 (≈3 minutes the first time, mostly pulling
+the base image).
 
 ## 4. Choose an AI provider
 
-Each `railway variable set` triggers a deploy of that service unless you pass
-`--skip-deploys`. Set the provider's key the same way. Anthropic shown; any provider in
-[OpenClaw's provider list](https://docs.openclaw.ai/providers) works:
+Set the provider's key. Copy it to the clipboard first:
 
 ```bash
-read -rs provider_key && printf '%s' "$provider_key" | railway variable set ANTHROPIC_API_KEY --stdin --service openclaw; unset provider_key
+pbpaste | tr -d '\n' | railway variable set ANTHROPIC_API_KEY --stdin --service openclaw
 ```
 
-(`read -rs` waits for you to paste the key without echoing it.) Seal it too.
-
-Add it to `.railway/railway.ts` so future applies keep it
-([why](#keeping-variables-in-sync)):
-
-```ts
-env: {
-  PORT: "18789",
-  OPENCLAW_GATEWAY_TOKEN: preserve(),
-  ANTHROPIC_API_KEY: preserve(),
-},
-```
+`ANTHROPIC_API_KEY` is already declared in `.railway/railway.ts`. For another
+provider ([list](https://docs.openclaw.ai/providers)), set its variable and add it
+to the file as `preserve()` ([why](#keeping-variables-in-sync)).
 
 ## 5. Initialize the default agent
 
 Run OpenClaw's non-interactive onboarding inside the running container. Inside
-`railway ssh` you are root; the image's `openclaw` command drops to the `node`
-user for you.
+`railway ssh` you're root; the image's `openclaw` command drops to the `node`
+user for you, and the session sees the service's variables.
 
 ```bash
 railway ssh --service openclaw -- openclaw onboard --non-interactive --accept-risk --skip-health \
@@ -143,57 +149,56 @@ railway ssh --service openclaw -- openclaw onboard --non-interactive --accept-ri
 
 This creates the `main` agent, its workspace under `/data/.openclaw/workspace`,
 and an auth profile that *references* `ANTHROPIC_API_KEY` rather than copying it.
-For other providers replace `--auth-choice apiKey` (see
-`openclaw onboard --help` and [OpenClaw's automation guide](https://docs.openclaw.ai/start/wizard-cli-automation)).
-Verified locally: the command keeps the seeded hardening settings and leaves no
-plaintext key on the volume.
+For other providers replace `--auth-choice apiKey` (see `openclaw onboard --help`
+and [OpenClaw's automation guide](https://docs.openclaw.ai/start/wizard-cli-automation)).
 
-## 6. Start the Gateway
+## 6. Confirm the restart
 
 Onboarding changes `gateway.port`, which needs a restart. Because Railway is the
 supervisor (`OPENCLAW_SUPERVISOR_MODE=external`), the Gateway exits cleanly and
-Railway's `ALWAYS` restart policy starts it again. Nothing to do but confirm:
+Railway's `ALWAYS` restart policy starts it again (observed: back in ≈30 s).
+Then check that the agent answers:
 
 ```bash
 railway ssh --service openclaw -- openclaw health
-railway ssh --service openclaw -- openclaw models status
+railway ssh --service openclaw -- openclaw agent --agent main --message "Reply with exactly: OK"
 ```
 
-## 7. Configure Tailscale
+`openclaw models status --probe` refuses to run while the Gateway holds the
+state; the agent message tests the same credential end to end.
 
-Follow [TAILSCALE.md](TAILSCALE.md) to add the `tag:openclaw` access policy and
-create a one-off auth key, then:
+## 7. Connect Tailscale
+
+Create an auth key ([TAILSCALE.md](TAILSCALE.md#2-authenticate-the-node)), copy
+it, then:
 
 ```bash
-read -rs auth_key && printf '%s' "$auth_key" | railway variable set TS_AUTHKEY --stdin --service tailscale; unset auth_key
+pbpaste | tr -d '\n' | railway variable set TS_AUTHKEY --stdin --service tailscale
 ```
 
-`TS_AUTHKEY: preserve()` is already declared in `.railway/railway.ts`. After the
-deploy, the `tailscale` service turns healthy and a machine named `openclaw`
-appears in the Tailscale admin console. **(live-unverified)**
-
-Check the route from any tailnet device:
+After the deploy, a machine named `openclaw` appears in your tailnet. From any
+tailnet device:
 
 ```bash
-curl -fsS https://openclaw.<tailnet>.ts.net/healthz      # {"ok":true,"status":"live"}
-curl -fsS http://openclaw.<tailnet>.ts.net:18789/healthz
+curl -fsS https://openclaw.<your-tailnet>.ts.net/healthz        # {"ok":true,"status":"live"}
+curl -fsS http://openclaw.<your-tailnet>.ts.net:18789/healthz   # same, without TLS
 ```
 
-Then tell the Gateway its private browser origin. This is required: until it is
-set, `openclaw security audit` reports the critical finding
-`gateway.control_ui.allowed_origins_required`, because the Gateway listens on a
-non-loopback address without a browser-origin allowlist. It also makes
-dashboard links OpenClaw generates point at the tailnet address.
-
-```bash
-railway ssh --service openclaw -- openclaw config set gateway.publicOrigin https://openclaw.<tailnet>.ts.net
-```
+If you didn't tag the key, the machine belongs to your user: disable its key
+expiry in the admin console, or it leaves the tailnet after 180 days.
 
 ## 8. Connect the macOS app
 
-See [DESKTOP.md](DESKTOP.md). In short: **Connection… → Connection → Remote
-(another host) → Gateway address** `wss://openclaw.<tailnet>.ts.net`, paste the
-Gateway token, **Save connection**.
+```bash
+security find-generic-password -s openclaw-railway-gateway-token -w | tr -d '\n' | \
+  /Applications/OpenClaw.app/Contents/MacOS/openclaw-mac primary set \
+    --direct-url wss://openclaw.<your-tailnet>.ts.net --token-stdin
+```
+
+`primary set` replaces the app's current primary connection (undo with
+`openclaw-mac primary set --local`). To keep your current primary and add this
+Gateway alongside it, use `openclaw-mac gateway add Railway --url https://openclaw.<your-tailnet>.ts.net --token-stdin`.
+Details and the in-app route: [DESKTOP.md](DESKTOP.md).
 
 ## 9. Approve device pairing
 
@@ -204,25 +209,23 @@ railway ssh --service openclaw -- openclaw devices list
 railway ssh --service openclaw -- openclaw devices approve <requestId>
 ```
 
-The Mac app asks for the operator role and the node role (for Mac
-capabilities); approve every pending request from it. Then approve the node's
-command surface:
-
-```bash
-railway ssh --service openclaw -- openclaw nodes pending
-railway ssh --service openclaw -- openclaw nodes approve <nodeRequestId>
-```
+The Mac app files two requests, for the operator role and the node role;
+approve both. It then asks for its **node capability surface**, the commands
+the agent may run on your Mac, including `system.run`. The app can approve
+this request itself from its approval panel, so decide deliberately what you
+allow ([SECURITY.md](SECURITY.md#local-node-permissions-the-mac)); from the CLI
+it's `openclaw nodes pending` / `openclaw nodes approve <id>`.
 
 Pairing is stored in `/data/.openclaw/state/openclaw.sqlite` and survives
-redeploys (verified locally across restarts).
+redeploys.
 
 ## 10. Connect Telegram
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
-2. Store it and add `TELEGRAM_BOT_TOKEN: preserve()` to `.railway/railway.ts`:
+2. Store it, and add `TELEGRAM_BOT_TOKEN: preserve()` to `.railway/railway.ts`:
 
    ```bash
-   read -rs bot_token && printf '%s' "$bot_token" | railway variable set TELEGRAM_BOT_TOKEN --stdin --service openclaw; unset bot_token
+   pbpaste | tr -d '\n' | railway variable set TELEGRAM_BOT_TOKEN --stdin --service openclaw
    ```
 
    On the next start, OpenClaw enables Telegram with `dmPolicy: "pairing"` and
@@ -242,13 +245,17 @@ redeploys (verified locally across restarts).
    railway ssh --service openclaw -- openclaw config set channels.telegram.dmPolicy allowlist
    ```
 
+**(live-unverified:** Telegram has been tested locally with a dummy token, not
+with a real bot on Railway.)
+
 ## 11. Run the security audit
 
 ```bash
 railway ssh --service openclaw -- openclaw security audit --deep
 ```
 
-Triage findings with [SECURITY.md](SECURITY.md#security-audit).
+Expected: 0 critical, and one warning, `gateway.probe_failed`, which the deep
+probe reports on every 2026.9.8 install ([why](SECURITY.md#security-audit)).
 
 ## 12. Verify the deployment
 
@@ -259,10 +266,10 @@ Triage findings with [SECURITY.md](SECURITY.md#security-audit).
 | Deep readiness | `curl -fsS https://openclaw.<tailnet>.ts.net/readyz` (tailnet device) | `{"ready":true}` |
 | No public exposure | Railway dashboard → each service → Settings → Networking | no domains, no TCP proxy |
 | Auth enforced | `curl -s -o /dev/null -w '%{http_code}' https://openclaw.<tailnet>.ts.net/control-ui-config.json` | `401` |
-| Desktop | Mac app → Connection → **Test** | connected |
+| Desktop | `openclaw-mac status --json` | primary `connected` |
 | Telegram | DM the bot | agent reply |
-| Persistence | `railway redeploy --service openclaw --yes`, then repeat the Desktop and Telegram checks | still paired, no re-approval |
-| Tailscale persistence | `railway redeploy --service tailscale --yes` | same machine in the admin console, no new auth key used |
+| Persistence | `railway redeploy --service openclaw --yes`, then repeat the Desktop check | still paired, no re-approval |
+| Tailscale persistence | `railway redeploy --service tailscale --yes` | same machine and IP, no new key used |
 
 ## Keeping variables in sync
 
@@ -275,8 +282,8 @@ variable if you confirm. So:
 - Declare every variable you add to a service in `railway.ts`. Use `preserve()`
   for secrets so the value stays in Railway and never enters the repository.
 - Read the plan before every apply.
-- Never use `ctx.randomString()` for secrets: it is a SHA-256 of the
-  environment name and a label, so anyone can derive it.
+- Never use `ctx.randomString()` for secrets: it's a SHA-256 of the environment
+  name and a label, so anyone can derive it.
 
 ## Backups
 
@@ -284,21 +291,20 @@ Turn on scheduled volume backups for both services in the dashboard (service →
 **Backups** → Daily and Weekly). See [UPGRADING.md](UPGRADING.md#5-back-up) for
 on-demand backups and restores.
 
-## Publishing as a Railway template
+## Maintaining the Railway template
 
-Do this only when you intend to publish. Railway templates are composed in the
-dashboard, not from this repository's files:
+The published template is generated from a separate source project, not from a
+live deployment, so no real secret can reach it. Railway's `templateGenerate`
+keeps service names, sources (including root directories), health-check paths,
+restart policy, volume mount paths, and template *functions* such as
+`${{secret(64, "abcdef0123456789")}}`. It **drops literal variable values** and
+marks every variable required. That is why both services listen on Railway's
+default port instead of taking a `PORT` variable. To regenerate:
 
-1. Deploy the project as above and confirm it works.
-2. Project **Settings → Generate Template from Project**, or compose one by hand
-   with the settings in the [dashboard table](#2-create-both-services-and-their-volumes).
-3. In the template's variables, mark `OPENCLAW_GATEWAY_TOKEN` required with the
-   description "Gateway secret, at least 32 characters" and default
-   `${{secret(64, "abcdef0123456789")}}` (Railway generates a 64-character hex
-   value per deployment). Mark `TS_AUTHKEY` optional. Leave provider keys and
-   `TELEGRAM_BOT_TOKEN` out; users add them during onboarding.
-4. Keep both volumes, keep public networking off, and keep the service names
-   `openclaw` and `tailscale`.
-5. Link the template's README to this repository's docs. Template users still run
-   onboarding (step 5) and pairing (step 9) themselves; they are one-time,
-   per-deployment decisions.
+1. In a project whose services mirror `.railway/railway.ts`, set
+   `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}` and
+   placeholder values for `OPENCLAW_PUBLIC_ORIGIN` and `TS_AUTHKEY`.
+2. `railway api 'mutation($p: String!) { templateGenerate(input: { projectId: $p }) { id code serializedConfig } }' --variables '{"p":"<project-id>"}'`
+3. Inspect `serializedConfig`: no secret values, both volumes, `rootDirectory: "tailscale"`.
+4. Deploy it into a scratch project (`railway deploy -t <code> -v …`) and wait
+   for `openclaw` to turn healthy before publishing.

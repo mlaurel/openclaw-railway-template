@@ -6,8 +6,8 @@ Railway's private network:
 
 | Tailnet address | Transport | Forwarded to |
 | --- | --- | --- |
-| `wss://openclaw.<tailnet>.ts.net` (port 443) | TLS terminated by Tailscale with the tailnet's Let's Encrypt certificate | `openclaw.railway.internal:18789` |
-| `ws://openclaw.<tailnet>.ts.net:18789` | plaintext inside WireGuard | `openclaw.railway.internal:18789` |
+| `wss://openclaw.<tailnet>.ts.net` (port 443) | TLS terminated by Tailscale with the tailnet's Let's Encrypt certificate | `openclaw.railway.internal:8080` |
+| `ws://openclaw.<tailnet>.ts.net:18789` | plaintext inside WireGuard | `openclaw.railway.internal:8080` |
 
 Both are raw TCP forwards (`TCPForward` in `tailscale/serve.json`), not HTTP
 proxies, so no forwarded headers reach the Gateway
@@ -24,13 +24,14 @@ HTTPS certificates. OpenClaw clients accept plaintext `ws://` to `.ts.net` hosts
 | `TS_AUTH_ONCE` | image | `true` | Logs in only when not already logged in, so a restart never consumes a key. |
 | `TS_SERVE_CONFIG` | image | `/etc/tailscale/serve.json` | Applied after login; `${TS_CERT_DOMAIN}` becomes the node's MagicDNS name. Containerboot watches the file, but it is baked into the image, so changes ship as a redeploy. |
 | `TS_HOSTNAME` | image (override in Railway) | `openclaw` | MagicDNS name. If the name is taken, Tailscale appends a suffix such as `openclaw-1`. |
-| `TS_ENABLE_HEALTH_CHECK`, `TS_LOCAL_ADDR_PORT` | image | `true`, `[::]:9002` | `/healthz` returns 200 once the node has a tailnet IP, 503 before. Railway's health check uses it. |
+| `TS_ENABLE_HEALTH_CHECK`, `TS_LOCAL_ADDR_PORT` | image | `true`, `[::]:8080` (Railway's default `PORT`) | `/healthz` returns 200 once the node has a tailnet IP, 503 before. Railway's health check uses it. |
 | `TS_AUTHKEY` | Railway (secret) | `tskey-auth-…` | First login only. |
 | `TS_ACCEPT_DNS` | default (`false`) | — | Keeps Railway's resolver, which `openclaw.railway.internal` depends on. |
 
 Railway can't mount files into a service, which is why `serve.json` is part of
-the image and the `tailscale` service builds from this repository instead of
-using the bare `tailscale/tailscale` image.
+the image and the `tailscale` service builds from this repository (with
+`tailscale/` as its root directory) instead of using the bare
+`tailscale/tailscale` image.
 
 ## 1. Prepare the tailnet
 

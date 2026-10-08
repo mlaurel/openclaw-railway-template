@@ -14,9 +14,9 @@ Two Railway services in one project environment, no public ingress.
  │  tailscale service                         openclaw service               │
  │  tailscale/tailscale:v1.102.5              ghcr.io/openclaw/openclaw:2026.9.8
  │  containerboot, userspace networking       openclaw gateway --bind lan    │
- │  Serve: raw TCP forward ───────────────►   :18789 (WebSocket + HTTP)      │
+ │  Serve: raw TCP forward ───────────────►   :8080 (WebSocket + HTTP)       │
  │         private network                    token auth + device pairing   │
- │         openclaw.railway.internal:18789                                   │
+ │         openclaw.railway.internal:8080                                    │
  │  volume: /var/lib/tailscale                volume: /data                  │
  │          (node identity)                           └── .openclaw/ (all state)
  └───────────────────────────────────────────────────────────────────────────┘
@@ -53,7 +53,8 @@ the supervisor.
 ### Startup sequence
 
 1. Entrypoint (root): refuse to start unless `OPENCLAW_GATEWAY_TOKEN` is set and
-   ≥ 32 characters, and `PORT` (if set) equals `18789`. Warn if `/data` is not a
+   ≥ 32 characters, `OPENCLAW_PUBLIC_ORIGIN` is a `https://….ts.net` address,
+   and `PORT` (if set) equals `8080`. Warn if `/data` is not a
    mount.
 2. Create `/data/.openclaw` (mode 700) owned by `node`; hand back to `node` any
    file under it owned by someone else.
@@ -87,8 +88,11 @@ The seed contains only infrastructure settings:
 | `gateway.terminal.enabled` | `false` | The operator terminal is a host shell inheriting the Gateway environment (including secrets). Enable it deliberately if you want it. |
 | `gateway.nodes.pairing.sshVerify` | `false` | Disables SSH-verified node auto-approval; every device is approved by hand. |
 
-`gateway.publicOrigin` is the one security setting the seed cannot contain,
-because it is your tailnet's address; deployment step 7 sets it. Agent-level
+`gateway.publicOrigin` is `${OPENCLAW_PUBLIC_ORIGIN}`, resolved by OpenClaw from
+the environment. It is the Gateway's browser-origin allowlist; without it,
+`openclaw security audit` reports a critical finding for any non-loopback bind.
+OpenClaw refuses to start when the referenced variable is missing, so the
+entrypoint checks it first. Agent-level
 policy (tools, channel allowlists) is the operator's choice; see
 [SECURITY.md](SECURITY.md).
 
@@ -162,7 +166,7 @@ policy allows can reach the service at all.
 
 | Concern | Owner | Mechanism |
 | --- | --- | --- |
-| Deploy health gate | Railway | `GET /startupz` on `$PORT` (Host `healthcheck.railway.app`), timeout 600 s. 200 once the Gateway admits traffic; ignores channel health. |
+| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), timeout 600 s (300 s from the template). 200 once the Gateway admits traffic; ignores channel health. |
 | Restart on exit | Railway | `restartPolicyType: ALWAYS`. Required: in external-supervisor mode a config change that needs a restart makes the Gateway exit 0 ("full process restart (supervisor restart)"), observed after onboarding. |
 | Graceful stop | Railway + container | Railway sends SIGTERM, then SIGKILL after `drainingSeconds: 330` (OpenClaw's own stop budget). `tini` forwards the signal; the Gateway drains and exits 0 (≈60 ms when idle). |
 | Crash recovery | Railway | A killed Gateway ends `tini`, the container exits non-zero, Railway restarts it. |
@@ -182,7 +186,7 @@ gate would fail every deploy until the channel was fixed.
 The official image with `tailscale/serve.json` baked in (containerboot reads Serve
 config only from a file, and Railway can't mount files into a service). It runs as
 root inside its container, the image default, with no added capabilities. It
-listens on the tailnet (443, 18789) and on `[::]:9002` for Railway's health check,
+listens on the tailnet (443, 18789) and on `[::]:8080` for Railway's health check,
 and has no Railway domain.
 
 - Identity persists on its volume (`TS_STATE_DIR=/var/lib/tailscale`), and
@@ -190,8 +194,12 @@ and has no Railway domain.
   same node and MagicDNS name.
 - `/healthz` is 200 once the node has a tailnet IP. It doesn't check the
   Gateway; the forward is lazy, so the two services can start in any order.
-- `openclaw.railway.internal` is hard-coded in `serve.json`, so the Gateway
+- `openclaw.railway.internal:8080` is hard-coded in `serve.json`, so the Gateway
   service must be named `openclaw`.
+- Both services listen on 8080, Railway's default `PORT`, so neither needs a
+  `PORT` variable. Railway templates drop literal variable values, so this keeps
+  the published template free of hand-entered defaults.
+- The service builds with `tailscale/` as its root directory.
 
 ## Requirements and limits
 

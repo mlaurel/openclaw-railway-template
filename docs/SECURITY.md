@@ -49,8 +49,9 @@ railway ssh --service openclaw -- openclaw security audit --deep
 Expected result on a correctly deployed template (checked in
 `tests/image.test.sh`, deep probe checked manually):
 
-- **0 critical.** Before deployment step 7, `gateway.control_ui.allowed_origins_required`
-  is critical; setting `gateway.publicOrigin` clears it.
+- **0 critical and 0 warnings** from a fresh deployment: the baseline config
+  sets `gateway.publicOrigin` from `OPENCLAW_PUBLIC_ORIGIN`, which clears
+  `gateway.control_ui.allowed_origins_required`.
 - **1 warning with `--deep`: `gateway.probe_failed` ("missing scope:
   operator.read").** The deep probe connects without a device identity by
   design, so it gets no operator scopes. The same warning appears on the

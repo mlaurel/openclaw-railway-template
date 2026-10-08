@@ -8,8 +8,8 @@ Status as of 2026-10-08. Statuses:
   evidence that exists is listed.
 - **Failed**: none.
 
-Local test suites: `sh tests/image.test.sh` (50 checks, all passing, ≈70 s),
-`npm run test:railway-config` (5 tests), `npm run typecheck`,
+Local test suites: `sh tests/image.test.sh` (52 checks, all passing, ≈75 s),
+`npm run test:railway-config` (6 tests), `npm run typecheck`,
 `sh tests/serve-config.test.sh`, ShellCheck, Hadolint, and actionlint. A
 mutation run (rate limit removed from the seed, ownership repair removed from
 the entrypoint) failed exactly the three related checks.
@@ -46,19 +46,19 @@ used unchanged. The Tailscale container joined a real tailnet with an auth key
 | 8 | Gateway authentication is enforced | Verified | `--auth token` pinned; 401 without or with a wrong token from a remote peer; entrypoint refuses missing or short tokens; token-only clients without device identity get no operator scopes. |
 | 9 | The Gateway is not publicly exposed by default | Verified (config) / live check pending | `.railway/railway.ts` declares no domains or TCP proxies (tested); `serve.json` has no Funnel (tested). Confirm in the Railway dashboard after deploy. |
 | 10 | Tailscale provides authenticated private access | Verified (live) | Live: the `tailscale` service joined the tailnet; from a tailnet Mac, `https://openclaw.<tailnet>.ts.net` (Let's Encrypt, trusted) and `:18789` reached the Gateway over Railway's private network; 401 without token, 200 with, 403 with a client-added `X-Forwarded-For`. Gateway logs show the peer as the Tailscale service's private IPv4 with `fwd=n/a`. |
-| 11 | Tailscale configuration survives restarts | Verified locally | Recreated the container without `TS_AUTHKEY` on the same state volume: same node, same tailnet IP, no re-authentication. A Railway volume is expected to behave the same; confirm in live step 8. |
+| 11 | Tailscale configuration survives restarts | Verified (live) | Live: the `tailscale` service was rebuilt and redeployed (new root directory and health port) and came back as the same machine with the same tailnet IP, without a new key. Locally: recreated without `TS_AUTHKEY`, same identity. |
 | 12 | Proxy attribution is handled securely | Verified | Header-free remote peer with token → 200; same request plus `X-Forwarded-For` or `Tailscale-User-Login` → 403 "Proxy client attribution is required". Repeated through real Tailscale Serve from a tailnet device. `trustedProxies` stays empty. [ARCHITECTURE.md](ARCHITECTURE.md#why-the-proxy-attribution-error-cannot-recur) |
 | 13 | The macOS desktop app can connect | Verified (live) | `openclaw-mac primary set --direct-url wss://openclaw.<tailnet>.ts.net --token-stdin`; after pairing approval the app reports `connected` (Gateway 2026.9.8) and uses chat, sessions, and models over the connection. |
 | 14 | Desktop device pairing works | Verified (live) | The Mac filed separate operator and node pairing requests from the Tailscale service's private IP; both stayed pending until `openclaw devices approve` over `railway ssh`, then connected. The node capability surface is a separate approval. |
 | 15 | Telegram integration works | Live validation required | Tested with a dummy token: `TELEGRAM_BOT_TOKEN` enables Telegram with `dmPolicy: pairing` / `groupPolicy: allowlist`, the token never lands on the volume, `channels add --use-env` works, and a bad token makes `/readyz` 503 while `/startupz` stays 200. A real bot DM not yet tried. |
 | 16 | Railway health checks reflect actual Gateway availability | Verified (live) | Railway marked every Gateway deploy SUCCESS only after `/startupz` returned 200 (including after migration). A token-less first deploy never became healthy and was replaced. `/startupz` ignores channel failures by design. |
-| 17 | Security auditing is documented | Verified | [SECURITY.md](SECURITY.md#security-audit). Tested: fresh boot → only `allowed_origins_required`; after `gateway.publicOrigin` → 0 critical, 0 warn. `--deep` adds upstream `gateway.probe_failed`, also seen on the unmodified official image. |
+| 17 | Security auditing is documented | Verified (live) | [SECURITY.md](SECURITY.md#security-audit). A fresh deployment audits clean (0 critical, 0 warn) because `gateway.publicOrigin` comes from `OPENCLAW_PUBLIC_ORIGIN`; tested in `tests/image.test.sh` and on Railway. `--deep` adds upstream `gateway.probe_failed`, also seen on the unmodified official image. |
 | 18 | Docker builds are reproducible | Verified | Base images and BuildKit frontend pinned by digest; no package installs at build or run time; npm lockfile; GitHub Actions pinned to commit SHAs. |
 | 19 | Version upgrades require one authoritative version change | Verified | The `FROM` line is the only reference; the test derives the expected version from it. Dependabot updates tag and digest together. |
 | 20 | CI validates the deployment configuration | Verified | `.github/workflows/ci.yml` passed on GitHub on the first push (run 37742254091: static checks and image build/test both green) and on every push since. actionlint clean. |
 | 21 | Backup and rollback procedures are documented | Verified (docs) / restore live pending | [UPGRADING.md](UPGRADING.md). `openclaw backup create --verify` tested against a running Gateway. Railway backup restore not exercised. |
 | 22 | The repository can be deployed from GitHub to Railway | Verified (live) | `railway config plan` / `apply` with `.railway/railway.ts` created both services and volumes from `stevekinney/openclaw-railway-template@main`; both images built on Railway; the Gateway answered a real agent message through Anthropic. |
-| 23 | Suitable for a reusable public Railway template | Live validation required | Template composition documented ([DEPLOYMENT.md](DEPLOYMENT.md#publishing-as-a-railway-template)). MIT licensed (`LICENSE`); public repository. |
+| 23 | Suitable for a reusable public Railway template | Verified (live) | MIT licensed, public repository. The template is generated from a sanitized source project, contains no secrets, generates the Gateway token, asks only for `OPENCLAW_PUBLIC_ORIGIN` and `TS_AUTHKEY`, and deployed into a fresh project with `openclaw` healthy. See [DEPLOYMENT.md](DEPLOYMENT.md#maintaining-the-railway-template). |
 
 ## Live deployment (2026-10-08)
 
@@ -82,7 +82,13 @@ Project `openclaw`, environment `production`, region `us-west2`. Done so far:
   (`--deep` adds only the known upstream `gateway.probe_failed`).
 - Step 5: the macOS app connected as primary over `wss://` and was paired.
 
-Remaining: Telegram, Tailscale redeploy persistence, crash and backup drills.
+- Tailscale persistence: the `tailscale` service was rebuilt and redeployed and
+  kept its machine name and tailnet IP.
+- Template: generated from a separate source project and deployed into a fresh
+  project; `openclaw` turned healthy with a generated token and no `PORT`
+  variable.
+
+Remaining: Telegram with a real bot, crash and backup drills.
 
 ## Live validation plan
 

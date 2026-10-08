@@ -12,23 +12,28 @@ For a copyable list of the runtime variables, see [`.env.example`](../.env.examp
 | OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0de…` — the only version pin |
 | Tailscale version | `tailscale/Dockerfile` `FROM` line | `tailscale/tailscale:v1.102.5@sha256:c507…` |
 | `OPENCLAW_HOME` | `Dockerfile` | `/data` → state at `/data/.openclaw` |
-| `OPENCLAW_GATEWAY_PORT` | `Dockerfile` | `18789` |
+| `OPENCLAW_GATEWAY_PORT` | `Dockerfile` | `8080`, the `PORT` Railway injects when a service sets none |
 | `OPENCLAW_SUPERVISOR_MODE` | `Dockerfile` | `external` — Railway owns the process lifecycle; OpenClaw refuses self-update and service installs, and restarts by exiting cleanly |
 | `OPENCLAW_NO_AUTO_UPDATE` | `Dockerfile` | `1` |
 | Gateway bind and auth mode | `Dockerfile` `CMD` | `gateway --bind lan --auth token` (pinned so no config edit can undo them) |
 | Baseline OpenClaw config | `config/openclaw.seed.json` | Copied to `/data/.openclaw/openclaw.json` on first boot only |
-| Tailscale defaults | `tailscale/Dockerfile` | `TS_USERSPACE=true`, `TS_STATE_DIR=/var/lib/tailscale`, `TS_AUTH_ONCE=true`, `TS_SERVE_CONFIG=/etc/tailscale/serve.json`, `TS_HOSTNAME=openclaw`, `TS_ENABLE_HEALTH_CHECK=true`, `TS_LOCAL_ADDR_PORT=[::]:9002` |
-| Tailscale Serve routes | `tailscale/serve.json` | `:443` (TLS terminated) and `:18789` → `openclaw.railway.internal:18789`, raw TCP |
+| Tailscale defaults | `tailscale/Dockerfile` | `TS_USERSPACE=true`, `TS_STATE_DIR=/var/lib/tailscale`, `TS_AUTH_ONCE=true`, `TS_SERVE_CONFIG=/etc/tailscale/serve.json`, `TS_HOSTNAME=openclaw`, `TS_ENABLE_HEALTH_CHECK=true`, `TS_LOCAL_ADDR_PORT=[::]:8080` (Railway's default `PORT`) |
+| Tailscale Serve routes | `tailscale/serve.json` | tailnet `:443` (TLS terminated) and `:18789` → `openclaw.railway.internal:8080`, raw TCP |
 
 The Dockerfiles declare no `ARG`s. Railway passes service variables to builds
 only as matching build arguments, so no variable can reach an image layer
 (`tests/image.test.sh` checks this).
 
+There is no `PORT` variable on either service. Railway injects `PORT=8080` into
+any service that doesn't set one, and both containers listen there (the Gateway,
+and containerboot's health endpoint). The entrypoint refuses to start if a
+`PORT` variable points anywhere else.
+
 ## Railway variables: `openclaw` service
 
 | Variable | Required | Secret | Purpose |
 | --- | --- | --- | --- |
-| `PORT` | yes | no | `18789`. Railway health-checks `$PORT`; the entrypoint refuses to start if it differs from the Gateway port. |
+| `OPENCLAW_PUBLIC_ORIGIN` | yes | no | `https://openclaw.<your-tailnet>.ts.net`. The baseline config sets `gateway.publicOrigin` from it, which is also the browser-origin allowlist. The entrypoint refuses to start if it is missing or not a `https://….ts.net` address. |
 | `OPENCLAW_GATEWAY_TOKEN` | yes | **yes** | Gateway authentication secret, ≥ 32 characters. Generate with `openssl rand -hex 32`. |
 | Provider key, e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | for the provider you choose | **yes** | Model credential. Onboarding stores an env reference to it, not the value. |
 | `TELEGRAM_BOT_TOKEN` | for Telegram | **yes** | Bot token from @BotFather. Its presence enables Telegram (DM pairing, allowlisted groups). |
@@ -37,7 +42,6 @@ only as matching build arguments, so no variable can reach an image layer
 
 | Variable | Required | Secret | Purpose |
 | --- | --- | --- | --- |
-| `PORT` | yes | no | `9002`, containerboot's health endpoint. |
 | `TS_AUTHKEY` | no | **yes** | One-off, tagged, pre-approved auth key, used only for the first login. Omit it to log in once through the URL printed in the deploy logs. See [TAILSCALE.md](TAILSCALE.md). |
 | `TS_HOSTNAME` | no | no | Overrides the MagicDNS name (default `openclaw`). |
 

@@ -62,8 +62,12 @@ railway ssh --service openclaw -- openclaw devices list
 railway ssh --service openclaw -- openclaw devices approve <requestId>
 ```
 
-Leave the app open; it retries and connects once approved. Then approve the
-node's command surface (a separate, second layer):
+Leave the app open; it retries and connects once approved. Then comes a
+separate, second layer: the node's **command surface**, the commands the agent
+may run on this Mac, including `system.run` (shell). The app can approve this
+request itself from its approval panel (observed on a live deployment), so
+decide deliberately; see [SECURITY.md](SECURITY.md#local-node-permissions-the-mac).
+From the CLI:
 
 ```bash
 railway ssh --service openclaw -- openclaw nodes pending
@@ -84,11 +88,8 @@ the volume and survive redeploys. Revoke a device with
 - After `railway redeploy --service openclaw --yes`, the app reconnects on its
   own without new pairing requests.
 
-**(live-unverified)** These steps follow the OpenClaw 2026.9.8 macOS docs. The
-Gateway side is tested in `tests/image.test.sh`: a non-loopback peer with the
-token connects without attribution errors, a new device stays pending until
-`devices approve`, and the pairing survives restarts. The app itself has not
-been run against a Railway deployment yet.
+Verified on a live Railway deployment (2026-10-08) with the macOS app 2026.9.8,
+connected as primary over `wss://`.
 
 ## Browser dashboard
 
@@ -109,7 +110,7 @@ registered with Railway.
 2. Keep a tunnel open:
 
    ```bash
-   ssh -N -L 18789:127.0.0.1:18789 <service-instance-id>@ssh.railway.com
+   ssh -N -L 18789:127.0.0.1:8080 <service-instance-id>@ssh.railway.com
    ```
 
 3. Point the app at `ws://127.0.0.1:18789` with the Gateway token.

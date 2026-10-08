@@ -17,19 +17,23 @@ reachable only through Tailscale.
 
 ```text
 Mac app / browser / phone ──Tailscale──► tailscale service ──private network──► openclaw service ──► /data volume
-                                         (raw TCP :443/:18789)                   (Gateway :18789)
+                                         (raw TCP :443/:18789)                   (Gateway :8080)
 ```
 
 ## Deploy
 
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) takes a fork to a working Gateway in
-12 steps: create the project, set the Gateway token, onboard a model provider,
-join your tailnet, pair the Mac app, connect Telegram, audit.
+**[docs/QUICKSTART.md](docs/QUICKSTART.md)**: deploy the Railway template, give it
+your tailnet address and a Tailscale auth key, then onboard a model provider
+and pair the Mac app. About 15 minutes.
+
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) does the same from your own fork with
+Railway Infrastructure as Code (`.railway/railway.ts`).
 
 ## Documentation
 
 | | |
 | --- | --- |
+| [QUICKSTART.md](docs/QUICKSTART.md) | Template deploy to a paired Mac app in about 15 minutes |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design, access options compared, why proxy attribution can't fail, what Railway owns |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Step-by-step deployment and onboarding; publishing as a Railway template |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Every variable and setting, build-time vs runtime, what lives on the volume |
@@ -48,7 +52,7 @@ scripts/entrypoint.sh          Volume preparation, environment checks, privilege
 scripts/openclaw-as-node.sh    Runs the CLI as `node` from root `railway ssh` shells
 config/openclaw.seed.json      Baseline config, written on first boot only
 tailscale/Dockerfile           Official Tailscale image + Serve config
-tailscale/serve.json           Raw TCP forwards to openclaw.railway.internal:18789
+tailscale/serve.json           Raw TCP forwards to openclaw.railway.internal:8080
 .railway/railway.ts            Railway Infrastructure as Code: two services, two volumes
 .env.example                   Runtime variables for both services (documentation only)
 tests/                         Image integration tests, IaC tests, Serve config check
