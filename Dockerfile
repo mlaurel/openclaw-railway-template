@@ -26,7 +26,8 @@ USER root
 ENV OPENCLAW_HOME=/data \
     OPENCLAW_GATEWAY_PORT=18789 \
     OPENCLAW_SUPERVISOR_MODE=external \
-    OPENCLAW_NO_AUTO_UPDATE=1
+    OPENCLAW_NO_AUTO_UPDATE=1 \
+    OPENCLAW_MACHINE_DISPLAY_NAME=Gowanus
 
 # GitHub CLI, which OpenClaw drives for Settings > Profile > GitHub connections
 # (device sign-in). OpenClaw keeps each connection's credentials under the state
@@ -132,6 +133,10 @@ RUN mv /home/linuxbrew/.linuxbrew /opt/homebrew-seed \
  && ln -s /data/linuxbrew /home/linuxbrew/.linuxbrew
 
 COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscaled /usr/local/bin/
+
+# Keep this patch in .dockerignore's build-context allowlist.
+COPY scripts/patch-machine-display-name.mjs /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
+RUN node /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
 
 COPY config/openclaw.seed.json /etc/openclaw-railway/openclaw.seed.json
 COPY scripts/entrypoint.sh /usr/local/bin/openclaw-railway-entrypoint
