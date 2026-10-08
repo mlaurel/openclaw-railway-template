@@ -186,6 +186,13 @@ check "a fresh deployment passes the security audit with no warnings or critical
   '[ -z "$(audit_problems)" ]'
 check "gateway.publicOrigin comes from OPENCLAW_PUBLIC_ORIGIN" \
   'docker exec "$gateway" grep -F "\${OPENCLAW_PUBLIC_ORIGIN}" /data/.openclaw/openclaw.json'
+check "mobile pairing QR advertises the tailnet wss:// address with full access" \
+  'docker exec "$gateway" openclaw qr --json | node -e "
+    let input = \"\";
+    process.stdin.on(\"data\", (chunk) => (input += chunk)).on(\"end\", () => {
+      const setup = JSON.parse(input.slice(input.indexOf(\"{\")));
+      process.exit(setup.gatewayUrl.startsWith(\"wss://\") && setup.gatewayUrl.endsWith(\".ts.net\") && setup.access === \"full\" ? 0 : 1);
+    });"'
 
 log "health checks"
 check "/healthz returns 200" '[ "$(remote_status /healthz)" = 200 ]'

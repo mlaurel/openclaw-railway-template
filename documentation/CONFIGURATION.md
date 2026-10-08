@@ -38,7 +38,7 @@ and containerboot's health endpoint). The entrypoint refuses to start if a
 
 | Variable | Required | Secret | Purpose |
 | --- | --- | --- | --- |
-| `OPENCLAW_PUBLIC_ORIGIN` | yes | no | `https://openclaw.<your-tailnet>.ts.net`. The baseline config sets `gateway.publicOrigin` from it, which is also the browser-origin allowlist. The entrypoint refuses to start if it is missing or not a `https://….ts.net` address. |
+| `OPENCLAW_PUBLIC_ORIGIN` | yes | no | `https://openclaw.<your-tailnet>.ts.net`. The baseline config sets `gateway.publicOrigin` (the browser-origin allowlist) and the mobile pairing URL from it. The entrypoint refuses to start if it is missing or not a `https://….ts.net` address. |
 | `OPENCLAW_GATEWAY_TOKEN` | yes | **yes** | Gateway authentication secret, ≥ 32 characters. Generate with `openssl rand -hex 32`. |
 | Provider key, e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | for the provider you choose | **yes** | Model credential. Onboarding stores an env reference to it, not the value. |
 | `GOG_KEYRING_PASSWORD` | for the gog skill | **yes** | Password for `gog`'s token file on the volume. See [TOOLS.md](TOOLS.md#google-gog). |

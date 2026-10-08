@@ -93,6 +93,7 @@ The seed contains only infrastructure settings:
 | `gateway.tailscale.mode` | `off` | OpenClaw's managed Tailscale needs a local `tailscale` daemon; this topology uses a separate service. |
 | `gateway.terminal.enabled` | `false` | The operator terminal is a host shell inheriting the Gateway environment (including secrets). Enable it deliberately if you want it. |
 | `gateway.nodes.pairing.sshVerify` | `false` | Disables SSH-verified node auto-approval; every device is approved by hand. |
+| `plugins.entries.device-pair.config.publicUrl` | `${OPENCLAW_PUBLIC_ORIGIN}` | Mobile pairing codes (`openclaw qr`) advertise the tailnet `wss://` address. Without it they advertise the container's private `ws://` address, which phones can't reach and which OpenClaw downgrades to limited access. |
 
 `gateway.publicOrigin` is `${OPENCLAW_PUBLIC_ORIGIN}`, resolved by OpenClaw from
 the environment. It is the Gateway's browser-origin allowlist; without it,

@@ -27,5 +27,14 @@
         "sshVerify": false
       }
     }
+  },
+  "plugins": {
+    "entries": {
+      "device-pair": {
+        "config": {
+          "publicUrl": "${OPENCLAW_PUBLIC_ORIGIN}"
+        }
+      }
+    }
   }
 }

@@ -98,6 +98,20 @@ the Gateway token. Each browser profile is a separate device: approve it with
 `openclaw devices list` / `approve` as above. Private windows forget their
 device identity and need approval every time.
 
+## Phone (iOS and Android)
+
+With the phone on your tailnet, generate a pairing code and scan it in the
+OpenClaw app:
+
+```bash
+railway ssh --service openclaw -- openclaw qr
+```
+
+The code advertises `wss://openclaw.<tailnet>.ts.net` with full access. Add
+`--limited` to withhold administrative access from the phone. The code holds a
+short-lived bootstrap token, so don't post it anywhere. Approve the device with
+`openclaw devices list` / `approve` if it stays pending.
+
 ## Fallback: Railway SSH tunnel
 
 If Tailscale is unavailable, forward the Gateway port through Railway's SSH

@@ -91,6 +91,7 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 | Gateway log: `observed unattributable proxy-shaped traffic from <ip>` | A client sent `X-Forwarded-*` or `Tailscale-*` headers. Tailscale's TCP forward passes client headers through unchanged, and the Gateway rejected that request (403). Logged once per process. | Nothing, unless it repeats from clients you don't expect. |
 | `missing scope: operator.read` from a remote CLI with `--url` | `--url` connections without a paired device identity get no operator scopes. | Run operator commands through `railway ssh`, or pair the client. |
 | Mac app: dashboard works but Mac capabilities offline | The node role or its capabilities aren't approved. | `openclaw devices list` and `openclaw nodes pending`; approve. |
+| `openclaw qr`: `This Gateway URL uses plaintext ws://, so the setup code was limited` | A deployment created before the pairing URL was added to the baseline config; the code points at the container's private address. | `openclaw config set plugins.entries.device-pair.config.publicUrl '${OPENCLAW_PUBLIC_ORIGIN}'` (applies without a restart), then generate a new code. |
 | `Protocol mismatch` in the dashboard after an upgrade | Stale cached UI. | Hard-refresh or clear site data for the dashboard origin. |
 | `401 Unauthorized` everywhere | Wrong or rotated token, or too many failures. | Check the token; after 10 failures in a minute, the Tailscale service's IP is locked out for 5 minutes. That affects every tailnet client, because they share it. |
 
