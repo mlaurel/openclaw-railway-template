@@ -16,7 +16,7 @@ Before you deploy, turn on **MagicDNS** and **HTTPS certificates** in the Tailsc
 | --- | --- |
 | `TS_AUTHKEY` | your Tailscale auth key, used once on first boot |
 
-`OPENCLAW_GATEWAY_TOKEN` is generated for you. After deploying, add your model provider, open the dashboard at `https://openclaw.your-tailnet.ts.net/`, and pair the macOS app. The [Quickstart](https://github.com/stevekinney/openclaw-railway-template/blob/main/documentation/QUICKSTART.md) has every command.
+`OPENCLAW_GATEWAY_TOKEN` is generated for you. After deploying, add your model provider, open the dashboard at `https://openclaw.your-tailnet.ts.net/`, and pair the macOS app. If your tailnet already has a machine named `openclaw`, Tailscale names this one `openclaw-1` and the address follows (`https://openclaw-1.your-tailnet.ts.net/`); the admin console's Machines page shows the name it got. The [Quickstart](https://github.com/stevekinney/openclaw-railway-template/blob/main/documentation/QUICKSTART.md) has every command.
 
 ## Common Use Cases
 

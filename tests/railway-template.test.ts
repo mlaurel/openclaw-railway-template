@@ -8,12 +8,16 @@ import { test } from "node:test";
 
 const readme = await readFile(new URL("../documentation/RAILWAY_TEMPLATE.md", import.meta.url), "utf8");
 
-test("uses no angle-bracket placeholders Railway would strip", () => {
-  assert.deepEqual(readme.match(/<[^>\s]+>/g) ?? [], []);
+// What Railway would publish: every <…> construct removed, including ones with
+// spaces or attributes such as <your tailnet>.
+const published = readme.replace(/<[^>]*>/g, "");
+
+test("uses no angle-bracket construct Railway would strip", () => {
+  assert.deepEqual(readme.match(/<[^>]*>/g) ?? [], []);
 });
 
-test("has no address left empty by a stripped placeholder", () => {
-  assert.doesNotMatch(readme, /\.\.ts\.net/);
+test("publishes no address left empty by a stripped placeholder", () => {
+  assert.doesNotMatch(published, /\.\.ts\.net|\/\/\.ts\.net/);
 });
 
 test("names the only variable the template asks for", () => {
