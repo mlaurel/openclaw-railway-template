@@ -1,10 +1,10 @@
-# Build context allowlist: only the files the OpenClaw Dockerfile copies.
-# (The tailscale service builds from tailscale/ as its own context.)
+# Build context allowlist: only the files the Dockerfile copies.
 *
 !config/openclaw.seed.json
 !scripts/entrypoint.sh
 !scripts/openclaw-as-node.sh
 !scripts/as-node.sh
 !scripts/brew-as-node.sh
+!scripts/sidecar.mjs
 !tools/package.json
 !tools/package-lock.json

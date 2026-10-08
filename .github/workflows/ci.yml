@@ -24,24 +24,24 @@ jobs:
       - name: Evaluate Railway configuration
         run: npm run test:railway-config
       - name: Validate JSON configuration
-        run: |
-          jq empty config/openclaw.seed.json
-          jq empty tailscale/serve.json
-      - name: Check Tailscale Serve config against the pinned Tailscale types
-        run: sh tests/serve-config.test.sh
+        run: jq empty config/openclaw.seed.json
       - name: ShellCheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 \
-            scripts/entrypoint.sh scripts/openclaw-as-node.sh scripts/as-node.sh scripts/brew-as-node.sh tests/image.test.sh tests/serve-config.test.sh
+            scripts/entrypoint.sh scripts/openclaw-as-node.sh scripts/as-node.sh scripts/brew-as-node.sh tests/image.test.sh
       - name: Hadolint
         run: |
           docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
-          docker run --rm -i hadolint/hadolint:v2.15.1 < tailscale/Dockerfile
 
   images:
     name: Build and test images
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build, start, and exercise both images
+      - name: Build, start, and exercise the image
         run: sh tests/image.test.sh
+        env:
+          # Optional repository secret: a reusable, ephemeral Tailscale auth key.
+          # When set, the live tier logs a node in to the tailnet. Dependabot and
+          # fork pull requests don't receive secrets, so it is skipped there.
+          TAILSCALE_TEST_AUTHKEY: ${{ secrets.TAILSCALE_TEST_AUTHKEY }}

@@ -1,4 +1,4 @@
-// Railway Infrastructure as Code for this template: two services, two volumes.
+// Railway Infrastructure as Code for this template: one service, one volume.
 //
 // Railway evaluates this file only when you run `railway config plan` or
 // `railway config apply`; deploys never read it. See documentation/DEPLOYMENT.md.
@@ -15,7 +15,7 @@ const environment = globalThis.process?.env ?? {};
 const sourceRepository = environment.OPENCLAW_RAILWAY_REPOSITORY ?? "<github-owner>/<repository>";
 const sourceBranch = environment.OPENCLAW_RAILWAY_BRANCH ?? "main";
 
-// Where both services and their volumes run. Declare the volume region and size
+// Where the service and its volume run. Declare the volume region and size
 // explicitly: Railway fills them in when it creates a volume, and an undeclared
 // value shows up in every later plan as a destructive change back to "unset".
 const region = environment.OPENCLAW_RAILWAY_REGION ?? "us-west2";
@@ -29,10 +29,8 @@ export default defineRailway(() => {
   }
 
   const openclawState = volume("openclaw-state", { region, sizeMB: volumeSizeMB });
-  const tailscaleState = volume("tailscale-state", { region, sizeMB: volumeSizeMB });
-
-  // The service name is load-bearing: tailscale/serve.json forwards to
-  // openclaw.railway.internal, Railway's private DNS name for this service.
+  // The Gateway and Tailscale share this container; Tailscale Serve, managed
+  // by OpenClaw, is the only way in. No Railway domain or TCP proxy.
   const openclaw = service("openclaw", {
     source: github(sourceRepository, { branch: sourceBranch }),
     build: {
@@ -45,8 +43,10 @@ export default defineRailway(() => {
     replicas: { [region]: 1 },
     deploy: {
       requiredMountPath: "/data",
-      // /startupz is 200 once the Gateway admits traffic. It ignores channel
-      // health, so a revoked Telegram token cannot fail every deploy.
+      // /startupz is 200 once the Gateway admits traffic, which includes
+      // Tailscale Serve being up. It ignores channel health, so a revoked
+      // Telegram token cannot fail every deploy. The sidecar relays it from
+      // PORT to the loopback-only Gateway.
       healthcheckPath: "/startupz",
       // Doctor runs migrations before the Gateway starts; upgrades can be slow.
       healthcheckTimeout: 600,
@@ -57,42 +57,20 @@ export default defineRailway(() => {
       drainingSeconds: 330,
     },
     volumeMounts: { "/data": openclawState },
-    // No PORT variable: Railway then injects PORT=8080, which the Gateway uses.
+    // No PORT variable: Railway then injects PORT=8080, where the sidecar
+    // relays health checks.
     env: {
       OPENCLAW_GATEWAY_TOKEN: preserve(),
-      // https://openclaw.<your-tailnet>.ts.net; set it in Railway before deploying.
-      OPENCLAW_PUBLIC_ORIGIN: preserve(),
+      // Used once, to log the container in to your tailnet on first boot.
+      TS_AUTHKEY: preserve(),
       ANTHROPIC_API_KEY: preserve(),
       // Password for gog's token file; see documentation/TOOLS.md.
       GOG_KEYRING_PASSWORD: preserve(),
     },
   });
 
-  const tailscale = service("tailscale", {
-    source: github(sourceRepository, { branch: sourceBranch, rootDirectory: "tailscale" }),
-    build: {
-      builder: "DOCKERFILE",
-      // Railway keeps this repository-relative path once set, and a plan that
-      // clears it never converges, so it is declared explicitly.
-      dockerfilePath: "tailscale/Dockerfile",
-      watchPatterns: ["/tailscale/**"],
-    },
-    replicas: { [region]: 1 },
-    deploy: {
-      requiredMountPath: "/var/lib/tailscale",
-      // containerboot's /healthz is 200 once the node has a tailnet address.
-      healthcheckPath: "/healthz",
-      healthcheckTimeout: 300,
-      restartPolicyType: "ALWAYS",
-    },
-    volumeMounts: { "/var/lib/tailscale": tailscaleState },
-    env: {
-      TS_AUTHKEY: preserve(),
-    },
-  });
-
   // Must match the project name given to `railway init --name`.
   return project("openclaw", {
-    resources: [openclaw, openclawState, tailscale, tailscaleState],
+    resources: [openclaw, openclawState],
   });
 });

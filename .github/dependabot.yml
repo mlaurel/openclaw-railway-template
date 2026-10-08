@@ -2,19 +2,13 @@
 # OpenClaw upgrade is a deploy, so follow documentation/UPGRADING.md before merging.
 version: 2
 updates:
+  # Both FROM lines in the Dockerfile: OpenClaw and the Tailscale binaries.
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
     commit-message:
-      prefix: "openclaw"
-
-  - package-ecosystem: docker
-    directory: /tailscale
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: "tailscale"
+      prefix: "image"
 
   - package-ecosystem: npm
     directory: /

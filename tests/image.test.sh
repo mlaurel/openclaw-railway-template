@@ -1,12 +1,20 @@
 #!/bin/sh
-# Integration tests for the OpenClaw and Tailscale images. Requires Docker.
+# Integration tests for the OpenClaw image. Requires Docker.
 #
-#   sh tests/image.test.sh               # build both images, then test them
-#   SKIP_BUILD=1 sh tests/image.test.sh  # test images that are already built
+#   sh tests/image.test.sh               # build the image, then test it
+#   SKIP_BUILD=1 sh tests/image.test.sh  # test an image that is already built
+#   TAILSCALE_TEST_AUTHKEY=tskey-... sh tests/image.test.sh
+#                                        # also run the live tier on a tailnet
 #
-# Containers run on a private Docker network. A second container stands in for
-# the Tailscale relay: a non-loopback peer that sends no forwarded headers,
-# which is what Tailscale's TCP forwarding presents to the Gateway.
+# The core tier needs no tailnet. It runs the Gateway with Tailscale skipped
+# (OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE, test-only), so the Gateway is
+# loopback-only and authentication is exercised from inside the container. A
+# second container on a private Docker network plays Railway's health check,
+# which can only reach the sidecar's relay.
+#
+# The live tier logs a real node in to a tailnet with TAILSCALE_TEST_AUTHKEY.
+# Use a reusable, ephemeral key: the node logs out at the end, and Tailscale
+# removes ephemeral nodes once they go offline.
 #
 # Conditions passed to check() are single-quoted on purpose: check() evals them
 # later, so ShellCheck cannot see where their variables are used.
@@ -16,14 +24,13 @@ set -eu
 cd "$(dirname "$0")/.."
 
 image="${IMAGE:-openclaw-railway:test}"
-tailscale_image="${TAILSCALE_IMAGE:-openclaw-railway-tailscale:test}"
 token="test-token-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-public_origin="https://openclaw.example-tailnet.ts.net"
 run_id="openclaw-test-$$"
 network="$run_id-network"
 gateway="$run_id-gateway"
-node_host="$run_id-node"
-tailscale="$run_id-tailscale"
+watchdog="$run_id-watchdog"
+live="$run_id-live"
+live_hostname="openclaw-test-$$"
 failures=0
 
 log() { printf '\n== %s\n' "$*"; }
@@ -38,31 +45,48 @@ check() {
 }
 
 cleanup() {
-  docker rm -f "$gateway" "$node_host" "$tailscale" >/dev/null 2>&1 || true
-  docker volume rm -f "$run_id-state" "$run_id-node-state" "$run_id-tailscale-state" >/dev/null 2>&1 || true
+  docker exec "$live" as-node tailscale logout >/dev/null 2>&1 || true
+  docker rm -f "$gateway" "$watchdog" "$live" >/dev/null 2>&1 || true
+  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-live-state" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
+# The Gateway without Tailscale: loopback-only, reachable only from inside.
 start_gateway() {
   docker run -d --name "$gateway" --network "$network" -v "$run_id-state:/data" \
-    -e PORT=8080 -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" "$image" >/dev/null
+    -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 \
+    "$image" node openclaw.mjs gateway --bind loopback --tailscale off --auth token >/dev/null
 }
 
-gateway_address() {
-  docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$gateway"
+container_address() {
+  docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$1"
 }
 
-# Prints the HTTP status of a GET made from another container on the network.
-# Extra arguments are name=value request headers.
+# Prints the status of a request made from another container on the network,
+# the way Railway's health check reaches the service. Extra arguments are
+# name=value request headers; METHOD and PORT override GET and 8080.
 remote_status() {
   path="$1"
   shift
   docker run --rm --network "$network" --entrypoint node "$image" -e '
+    const [method, url, ...pairs] = process.argv.slice(1);
+    const headers = Object.fromEntries(pairs.map((pair) => pair.split(/=(.*)/s).slice(0, 2)));
+    fetch(url, { method, headers, signal: AbortSignal.timeout(5000) })
+      .then((response) => console.log(response.status), () => console.log("unreachable"));
+  ' "${METHOD:-GET}" "http://$(container_address "$gateway"):${PORT:-8080}$path" "$@"
+}
+
+# Prints the status of a request to the Gateway's own loopback listener, made
+# from inside the container. Extra arguments are name=value request headers.
+local_status() {
+  path="$1"
+  shift
+  docker exec -u node "$gateway" node -e '
     const [url, ...pairs] = process.argv.slice(1);
     const headers = Object.fromEntries(pairs.map((pair) => pair.split(/=(.*)/s).slice(0, 2)));
     fetch(url, { headers }).then((response) => console.log(response.status), () => console.log("unreachable"));
-  ' "http://$(gateway_address):8080$path" "$@"
+  ' "http://127.0.0.1:18789$path" "$@"
 }
 
 wait_for_startup() {
@@ -86,20 +110,33 @@ root_owned_state() {
   docker exec "$gateway" find /data -user root
 }
 
+# Prints a field of `tailscale status --json` in a container.
+tailscale_field() {
+  docker exec "$1" as-node tailscale status --json | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => (input += chunk)).on("end", () => {
+      const status = JSON.parse(input);
+      console.log(process.argv[1] === "DNSName" ? status.Self.DNSName.replace(/\.$/, "") : status[process.argv[1]]);
+    });' "$2"
+}
+
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
   log "build"
   docker build -q -t "$image" . >/dev/null
-  docker build -q -t "$tailscale_image" tailscale >/dev/null
-  pass "both images build"
+  pass "the image builds"
 fi
 
 docker network create "$network" >/dev/null
 
-log "version"
+log "versions"
 pinned_version="$(sed -n 's|^FROM ghcr.io/openclaw/openclaw:\([^@]*\)@sha256:.*|\1|p' Dockerfile)"
 installed_version="$(docker run --rm --entrypoint node "$image" /app/openclaw.mjs --version | sed -n 's/^OpenClaw \([^ ]*\).*/\1/p')"
 check "installed OpenClaw ($installed_version) matches the Dockerfile pin ($pinned_version)" \
   '[ -n "$pinned_version" ] && [ "$pinned_version" = "$installed_version" ]'
+pinned_tailscale="$(sed -n 's|^FROM tailscale/tailscale:v\([^@]*\)@sha256:.* AS tailscale$|\1|p' Dockerfile)"
+installed_tailscale="$(docker run --rm --entrypoint tailscale "$image" version | head -1)"
+check "installed Tailscale ($installed_tailscale) matches the Dockerfile pin ($pinned_tailscale)" \
+  '[ -n "$pinned_tailscale" ] && [ "$pinned_tailscale" = "$installed_tailscale" ]'
 
 log "bundled tools"
 check "the GitHub CLI is installed for GitHub connections and runs as node" \
@@ -119,15 +156,13 @@ check "OpenClaw's image processor converts an iPhone HEIC photo to JPEG" \
       if (image.mimeType !== \"image/jpeg\" || image.width !== 64) process.exit(1);
     " "$rastermill"'"'"''
 
-log "no secrets in the images"
-for candidate in "$image" "$tailscale_image"; do
-  check "$candidate has no credentials in its environment" \
-    '! docker image inspect -f "{{range .Config.Env}}{{println .}}{{end}}" "$candidate" | grep -Ei "^[A-Z_]*(TOKEN|SECRET|PASSWORD|AUTHKEY|AUTH_KEY|API_KEY)="'
-  check "$candidate has no credentials in its build history" \
-    '! docker history --no-trunc --format "{{.CreatedBy}}" "$candidate" | grep -Ei "tskey-|sk-ant-|sk-proj-|GATEWAY_TOKEN="'
-done
-check "Dockerfiles declare no build args, so Railway variables never reach image layers" \
-  '! grep -n "^ARG" Dockerfile tailscale/Dockerfile'
+log "no secrets in the image"
+check "the image has no credentials in its environment" \
+  '! docker image inspect -f "{{range .Config.Env}}{{println .}}{{end}}" "$image" | grep -Ei "^[A-Z_]*(TOKEN|SECRET|PASSWORD|AUTHKEY|AUTH_KEY|API_KEY)="'
+check "the image has no credentials in its build history" \
+  '! docker history --no-trunc --format "{{.CreatedBy}}" "$image" | grep -Ei "tskey-|sk-ant-|sk-proj-|GATEWAY_TOKEN="'
+check "the Dockerfile declares no build args, so Railway variables never reach image layers" \
+  '! grep -n "^ARG" Dockerfile'
 
 log "environment validation"
 expect_refusal() {
@@ -142,24 +177,37 @@ expect_refusal() {
 }
 expect_refusal "refuses to start without OPENCLAW_GATEWAY_TOKEN" "OPENCLAW_GATEWAY_TOKEN is not set"
 expect_refusal "refuses a short gateway token" "at least 32 characters" -e OPENCLAW_GATEWAY_TOKEN=short
-expect_refusal "refuses to start without OPENCLAW_PUBLIC_ORIGIN" "OPENCLAW_PUBLIC_ORIGIN is not set" \
-  -e OPENCLAW_GATEWAY_TOKEN="$token"
-expect_refusal "refuses an OPENCLAW_PUBLIC_ORIGIN that isn't a tailnet HTTPS address" "must be the Gateway's tailnet HTTPS address" \
-  -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN=openclaw.example-tailnet.ts.net
-expect_refusal "refuses an origin built from a tailnet name that includes https:// (template mistake)" "check TAILNET_DNS_NAME" \
-  -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN=https://openclaw.https://example-tailnet.ts.net
-expect_refusal "refuses a PORT that would point Railway's health check elsewhere" "Delete the PORT variable" \
-  -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" -e PORT=18789
+expect_refusal "refuses a PORT that collides with the Gateway's loopback port" "Delete the PORT variable" \
+  -e OPENCLAW_GATEWAY_TOKEN="$token" -e PORT=18789
 expect_refusal "refuses to start as a non-root user it cannot prepare the volume with" "must start as root" \
-  --user node -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin"
+  --user node -e OPENCLAW_GATEWAY_TOKEN="$token"
+expect_refusal "refuses to start when Tailscale isn't logged in and TS_AUTHKEY is missing" "TS_AUTHKEY is not set" \
+  -e OPENCLAW_GATEWAY_TOKEN="$token"
+expect_refusal "reports a rejected auth key without printing it" "Tailscale login failed" \
+  -e OPENCLAW_GATEWAY_TOKEN="$token" -e TS_AUTHKEY=tskey-auth-invalid-for-tests
+check "the rejected auth key does not appear in the output" '! printf "%s" "$output" | grep -F tskey-auth-invalid-for-tests'
+# A volume from the previous layout: a LAN-bound Gateway behind a separate
+# Tailscale service, with gateway.publicOrigin and a device-pair publicUrl.
+docker run --rm -v "$run_id-old-state:/data" --entrypoint sh "$image" -c '
+  mkdir -p /data/.openclaw && node -e "
+    const config = JSON.parse(require(\"node:fs\").readFileSync(\"/etc/openclaw-railway/openclaw.seed.json\", \"utf8\"));
+    config.gateway.bind = \"lan\";
+    config.gateway.tailscale.mode = \"off\";
+    config.gateway.publicOrigin = \"\${OPENCLAW_PUBLIC_ORIGIN}\";
+    config.plugins = { entries: { \"device-pair\": { config: { publicUrl: \"\${OPENCLAW_PUBLIC_ORIGIN}\" } } } };
+    require(\"node:fs\").writeFileSync(\"/data/.openclaw/openclaw.json\", JSON.stringify(config));"' >/dev/null
+expect_refusal "refuses a config from the previous two-service layout and names the migration" "openclaw config set gateway.bind loopback" \
+  -v "$run_id-old-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
 
 log "first boot on an empty volume"
 start_gateway
-check "/startupz returns 200" 'wait_for_startup'
+check "/startupz returns 200 through the health relay" 'wait_for_startup'
 check "the baseline config is written on first boot" \
   'docker logs "$gateway" 2>&1 | grep -F "created /data/.openclaw/openclaw.json from the baseline config"'
 check "the config is in local mode with an env-referenced token" \
   '[ "$(gateway_cli config get gateway.mode)" = local ] && docker exec "$gateway" grep -q OPENCLAW_GATEWAY_TOKEN /data/.openclaw/openclaw.json'
+check "the config binds the Gateway to loopback behind OpenClaw-managed Tailscale Serve" \
+  '[ "$(gateway_cli config get gateway.bind)" = loopback ] && [ "$(gateway_cli config get gateway.tailscale.mode)" = serve ]'
 check "the state directory is owned by node with mode 700" \
   '[ "$(docker exec "$gateway" stat -c "%U %a" /data/.openclaw)" = "node 700" ]'
 check "nothing under /data is owned by root" '[ -z "$(root_owned_state)" ]'
@@ -168,6 +216,30 @@ check "every container process runs as uid 1000 (node)" \
   '[ -z "$(docker top "$gateway" -eo pid,uid | tail -n +2 | awk "\$2 != 1000")" ]'
 check "the gateway token does not appear in any process arguments" \
   '! docker top "$gateway" -eo pid,args | grep -F "$token"'
+
+log "network exposure"
+check "/healthz returns 200 through the relay" '[ "$(remote_status /healthz)" = 200 ]'
+check "/startupz accepts Railway's healthcheck.railway.app Host header" \
+  '[ "$(remote_status /startupz host=healthcheck.railway.app)" = 200 ]'
+check "/readyz returns 200 with no channels configured" '[ "$(remote_status /readyz)" = 200 ]'
+check "HEAD on a probe path is relayed" '[ "$(METHOD=HEAD remote_status /healthz)" = 200 ]'
+for path in / /control-ui-config.json /v1/models /healthz/../v1/models /%68ealthz; do
+  check "the relay refuses $path (404)" '[ "$(remote_status "$path")" = 404 ]'
+done
+check "the relay refuses POST to a probe path (404)" '[ "$(METHOD=POST remote_status /healthz)" = 404 ]'
+check "the Gateway's own port is unreachable from the network" '[ "$(PORT=18789 remote_status /healthz)" = unreachable ]'
+
+log "authentication on the loopback listener"
+check "an unauthenticated request is rejected (401)" '[ "$(local_status /control-ui-config.json)" = 401 ]'
+check "a wrong token is rejected (401)" \
+  '[ "$(local_status /control-ui-config.json "authorization=Bearer wrong-token-000000000000000000000000")" = 401 ]'
+check "the token is accepted (200)" '[ "$(local_status /control-ui-config.json "authorization=Bearer $token")" = 200 ]'
+# Only OpenClaw's managed Serve listener accepts Tailscale identity; forwarded
+# headers on the ordinary listener fail proxy attribution, even with the token.
+check "spoofed Tailscale identity headers are rejected by proxy attribution (403)" \
+  '[ "$(local_status /control-ui-config.json tailscale-user-login=someone@example.com x-forwarded-for=100.64.0.9 x-forwarded-proto=https x-forwarded-host=openclaw.example-tailnet.ts.net)" = 403 ]'
+check "forwarded headers are rejected even with the token (403)" \
+  '[ "$(local_status /control-ui-config.json "authorization=Bearer $token" x-forwarded-for=100.64.0.9)" = 403 ]'
 
 log "updatable tools layer"
 check "Homebrew is seeded onto the volume on first boot" \
@@ -195,61 +267,11 @@ audit_problems() {
       }
     });'
 }
-check "a fresh deployment passes the security audit with no warnings or critical findings" \
-  '[ -z "$(audit_problems)" ]'
-check "gateway.publicOrigin comes from OPENCLAW_PUBLIC_ORIGIN" \
-  'docker exec "$gateway" grep -F "\${OPENCLAW_PUBLIC_ORIGIN}" /data/.openclaw/openclaw.json'
-check "mobile pairing QR advertises the tailnet wss:// address with full access" \
-  'docker exec "$gateway" openclaw qr --json | node -e "
-    let input = \"\";
-    process.stdin.on(\"data\", (chunk) => (input += chunk)).on(\"end\", () => {
-      const setup = JSON.parse(input.slice(input.indexOf(\"{\")));
-      process.exit(setup.gatewayUrl.startsWith(\"wss://\") && setup.gatewayUrl.endsWith(\".ts.net\") && setup.access === \"full\" ? 0 : 1);
-    });"'
-
-log "health checks"
-check "/healthz returns 200" '[ "$(remote_status /healthz)" = 200 ]'
-check "/startupz accepts Railway's healthcheck.railway.app Host header" \
-  '[ "$(remote_status /startupz host=healthcheck.railway.app)" = 200 ]'
-check "/readyz returns 200 with no channels configured" '[ "$(remote_status /readyz)" = 200 ]'
-
-log "authentication and proxy attribution from a remote peer"
-check "an unauthenticated request is rejected (401)" \
-  '[ "$(remote_status /control-ui-config.json)" = 401 ]'
-check "a wrong token is rejected (401)" \
-  '[ "$(remote_status /control-ui-config.json "authorization=Bearer wrong-token-000000000000000000000000")" = 401 ]'
-check "the token from a header-free remote peer is accepted (200)" \
-  '[ "$(remote_status /control-ui-config.json "authorization=Bearer $token")" = 200 ]'
-check "a spoofed X-Forwarded-For is rejected by proxy attribution (403)" \
-  '[ "$(remote_status /control-ui-config.json "authorization=Bearer $token" x-forwarded-for=100.64.0.9)" = 403 ]'
-check "spoofed Tailscale identity headers are rejected (403)" \
-  '[ "$(remote_status /control-ui-config.json "authorization=Bearer $token" tailscale-user-login=someone@example.com)" = 403 ]'
-
-log "device pairing from a remote node"
-docker run -d --name "$node_host" --network "$network" -v "$run_id-node-state:/home/node/.openclaw" \
-  -e OPENCLAW_GATEWAY_TOKEN="$token" --entrypoint node "$image" \
-  /app/openclaw.mjs node run --host "$(gateway_address)" --port 8080 --no-tls --display-name pairing-test >/dev/null
-pending_request_id() {
-  gateway_cli devices list --json 2>/dev/null | docker run --rm -i --entrypoint node "$image" -e '
-    let input = "";
-    process.stdin.on("data", (chunk) => (input += chunk));
-    process.stdin.on("end", () => console.log(JSON.parse(input).pending?.[0]?.requestId ?? ""));'
-}
-request_id=""
-attempt=0
-while [ -z "$request_id" ] && [ "$attempt" -lt 30 ]; do
-  sleep 2
-  attempt=$((attempt + 1))
-  request_id="$(pending_request_id || true)"
-done
-check "the remote node waits for approval instead of being auto-approved" '[ -n "$request_id" ]'
-check "an operator approves the request from inside the container" 'gateway_cli devices approve "$request_id"'
-attempt=0
-until docker logs "$node_host" 2>&1 | grep -F "node host gateway connected" >/dev/null || [ "$attempt" -ge 30 ]; do
-  sleep 2
-  attempt=$((attempt + 1))
-done
-check "the approved node connects" 'docker logs "$node_host" 2>&1 | grep -F "node host gateway connected"'
+# gateway.trusted_proxies_missing fires for every loopback Gateway without
+# trustedProxies, including OpenClaw's own Serve setup; trusting 127.0.0.1 to
+# silence it would trust every process in the container. See SECURITY.md.
+check "the security audit has no critical findings and no warnings beyond trusted_proxies_missing" \
+  '[ "$(audit_problems)" = "warn gateway.trusted_proxies_missing" ]'
 
 log "state survives a restart"
 # /proc/1/environ belongs to node, so read it as node.
@@ -259,7 +281,7 @@ check "HOME is on the volume in a root shell too" '[ "$(docker exec "$gateway" s
 docker exec "$gateway" as-node sh -c 'echo kept > "$HOME/persist-check"'
 gateway_cli config set gateway.controlUi.communityInvite false >/dev/null 2>&1
 check "a config change made from a root shell leaves no root-owned files" '[ -z "$(root_owned_state)" ]'
-docker exec "$gateway" touch /data/.openclaw/written-by-root /data/home/written-by-root
+docker exec "$gateway" touch /data/.openclaw/written-by-root /data/home/written-by-root /data/tailscale/written-by-root
 start_time="$(date +%s)"
 docker stop -t 60 "$gateway" >/dev/null
 stop_seconds=$(($(date +%s) - start_time))
@@ -272,14 +294,12 @@ check "the baseline config was not reapplied" \
   '[ "$(docker logs "$gateway" 2>&1 | grep -c "from the baseline config")" = 1 ]'
 check "OpenClaw did not detect a clobbered config" \
   '! docker exec "$gateway" sh -c "ls /data/.openclaw | grep clobbered"'
-check "root-owned files are handed back to node on restart" \
-  '[ "$(docker exec "$gateway" stat -c %U /data/.openclaw/written-by-root)" = node ] && [ "$(docker exec "$gateway" stat -c %U /data/home/written-by-root)" = node ]'
+check "root-owned files are handed back to node on restart, including Tailscale state" \
+  'for file in /data/.openclaw/written-by-root /data/home/written-by-root /data/tailscale/written-by-root; do [ "$(docker exec "$gateway" stat -c %U "$file")" = node ] || exit 1; done'
 check "Homebrew survives a restart and isn't seeded again" \
   'docker exec "$gateway" brew --version && [ "$(docker logs "$gateway" 2>&1 | grep -c "created /data/linuxbrew")" = 1 ]'
 check "files in HOME survive a restart" \
   '[ "$(docker exec "$gateway" cat /data/home/persist-check)" = kept ]'
-check "the paired node is still paired after the restart" \
-  'gateway_cli devices list --json | grep -F pairing-test'
 
 log "crash handling"
 docker exec "$gateway" pkill -KILL -f openclaw-gateway || true
@@ -294,18 +314,73 @@ check "the crash exit code is non-zero" '[ "$(docker inspect -f "{{.State.ExitCo
 docker start "$gateway" >/dev/null
 check "the Gateway recovers after a crash" 'wait_for_startup'
 
-log "tailscale image"
-tailscale_environment="$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$tailscale_image")"
-for setting in TS_USERSPACE=true TS_STATE_DIR=/var/lib/tailscale TS_AUTH_ONCE=true \
-  TS_SERVE_CONFIG=/etc/tailscale/serve.json TS_ENABLE_HEALTH_CHECK=true TS_DEBUG_MTU=1236; do
-  check "defaults to $setting" 'printf "%s\n" "$tailscale_environment" | grep -qx "$setting"'
+# The sidecar under tini, as in the real container, with tailscaled logged out.
+docker run -d --name "$watchdog" --user node -e TS_STATE_DIR=/tmp/tailscale -e TS_SOCKET=/tmp/tailscaled.sock \
+  -e OPENCLAW_GATEWAY_PORT=18789 --entrypoint tini "$image" -s -- node /usr/local/lib/openclaw-railway/sidecar.mjs >/dev/null
+attempt=0
+until docker exec "$watchdog" pgrep -x tailscaled >/dev/null 2>&1 || [ "$attempt" -ge 15 ]; do
+  sleep 1
+  attempt=$((attempt + 1))
 done
-docker run -d --name "$tailscale" --network "$network" -v "$run_id-tailscale-state:/var/lib/tailscale" "$tailscale_image" >/dev/null
-sleep 10
-check "containerboot runs without NET_ADMIN or a TUN device" \
-  '[ "$(docker inspect -f "{{.State.Running}}" "$tailscale")" = true ]'
-check "/healthz is unhealthy until the node joins a tailnet" \
-  '! docker exec "$tailscale" wget -qO- http://127.0.0.1:8080/healthz'
+docker exec "$watchdog" pkill -KILL -x tailscaled || true
+attempt=0
+until [ "$(docker inspect -f '{{.State.Running}}' "$watchdog")" = false ] || [ "$attempt" -ge 15 ]; do
+  sleep 1
+  attempt=$((attempt + 1))
+done
+check "the container stops when tailscaled dies, so Railway restarts both" \
+  '[ "$(docker inspect -f "{{.State.Running}}" "$watchdog")" = false ] && docker logs "$watchdog" 2>&1 | grep -F "tailscaled exited"'
+
+if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
+  log "live: Tailscale Serve on a real tailnet"
+  docker run -d --name "$live" -v "$run_id-live-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
+    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$live_hostname" "$image" >/dev/null
+  attempt=0
+  until docker logs "$live" 2>&1 | grep -qE "serve enabled|serve failed" || [ "$attempt" -ge 90 ]; do
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  check "the container logs in to the tailnet with TS_AUTHKEY" \
+    'docker logs "$live" 2>&1 | grep -F "logged in to Tailscale as $live_hostname"'
+  check "Tailscale is running" '[ "$(tailscale_field "$live" BackendState)" = Running ]'
+  live_name="$(tailscale_field "$live" DNSName 2>/dev/null || true)"
+  check "OpenClaw enables Serve at https://$live_name/" \
+    'docker logs "$live" 2>&1 | grep -F "serve enabled: https://$live_name/"'
+  check "the auth key is not in the Gateway's environment" \
+    '! docker exec -u node "$live" sh -c "tr \"\\0\" \"\\n\" < /proc/\$(pgrep -f openclaw-gateway | head -1)/environ" | grep -F TS_AUTHKEY'
+  check "the auth key is not left in a file" '! docker exec "$live" grep -rlF "$TAILSCALE_TEST_AUTHKEY" /tmp /data'
+  check "the auth key is not in the logs" '! docker logs "$live" 2>&1 | grep -F "$TAILSCALE_TEST_AUTHKEY"'
+  check "mobile pairing QR advertises wss://$live_name with full access" \
+    'docker exec "$live" openclaw qr --json | node -e "
+      let input = \"\";
+      process.stdin.on(\"data\", (chunk) => (input += chunk)).on(\"end\", () => {
+        const setup = JSON.parse(input.slice(input.indexOf(\"{\")));
+        process.exit(setup.gatewayUrl === \"wss://$live_name\" && setup.access === \"full\" ? 0 : 1);
+      });"'
+  if [ "${TAILSCALE_TEST_ON_TAILNET:-}" = 1 ]; then
+    check "the dashboard answers over the tailnet at https://$live_name/" \
+      '[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "https://$live_name/healthz")" = 200 ]'
+  fi
+  docker restart "$live" >/dev/null
+  attempt=0
+  until [ "$(docker logs "$live" 2>&1 | grep -c "serve enabled")" -ge 2 ] || [ "$attempt" -ge 60 ]; do
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  check "after a restart, the saved login is reused (no second login)" \
+    '[ "$(docker logs "$live" 2>&1 | grep -c "logged in to Tailscale")" = 1 ] && [ "$(docker logs "$live" 2>&1 | grep -c "serve enabled")" = 2 ]'
+  docker exec -u node "$live" sh -c 'kill -9 "$(pgrep -x tailscaled)"' || true
+  attempt=0
+  until [ "$(docker inspect -f '{{.State.Running}}' "$live")" = false ] || [ "$attempt" -ge 30 ]; do
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  check "killing tailscaled stops the whole container" '[ "$(docker inspect -f "{{.State.Running}}" "$live")" = false ]'
+  docker start "$live" >/dev/null
+  sleep 15
+else
+  log "live tier skipped (set TAILSCALE_TEST_AUTHKEY to a reusable, ephemeral Tailscale auth key to run it)"
+fi
 
 printf '\n'
 if [ "$failures" -gt 0 ]; then

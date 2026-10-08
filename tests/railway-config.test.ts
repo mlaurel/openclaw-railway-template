@@ -37,14 +37,9 @@ function mountPaths(service: Resource): string[] {
   return Object.values(service.volumeAttachments ?? {}).map((attachment) => attachment.mountPath);
 }
 
-test("defines exactly two services and two volumes", () => {
+test("defines exactly one service and one volume", () => {
   const summary = resources.map((resource) => `${resource.type}:${resource.name}`).sort();
-  assert.deepEqual(summary, [
-    "service:openclaw",
-    "service:tailscale",
-    "volume:openclaw-state",
-    "volume:tailscale-state",
-  ]);
+  assert.deepEqual(summary, ["service:openclaw", "volume:openclaw-state"]);
 });
 
 test("openclaw runs one volume-backed, health-checked Gateway", () => {
@@ -54,27 +49,17 @@ test("openclaw runs one volume-backed, health-checked Gateway", () => {
   assert.equal(openclaw.deploy?.requiredMountPath, "/data");
   assert.equal(openclaw.deploy?.healthcheckPath, "/startupz");
   assert.equal(openclaw.deploy?.restartPolicyType, "ALWAYS");
-  assert.equal(openclaw.variables?.PORT, undefined, "no PORT: Railway's default 8080 is the Gateway port");
+  assert.equal(openclaw.variables?.PORT, undefined, "no PORT: Railway's default 8080 is the health relay");
   assert.deepEqual(mountPaths(openclaw), ["/data"]);
 });
 
-test("tailscale keeps its node identity on a volume", () => {
-  const tailscale = findService("tailscale");
-  assert.equal((tailscale.source as { rootDirectory?: string } | undefined)?.rootDirectory, "tailscale");
-  assert.equal(instanceCount(tailscale), 1);
-  assert.equal(tailscale.deploy?.requiredMountPath, "/var/lib/tailscale");
-  assert.equal(tailscale.deploy?.healthcheckPath, "/healthz");
-  assert.equal(tailscale.variables?.PORT, undefined, "no PORT: Railway's default 8080 is the health port");
-  assert.deepEqual(mountPaths(tailscale), ["/var/lib/tailscale"]);
-});
-
 test("volumes declare region and size, and services run in the same region", () => {
-  for (const name of ["openclaw-state", "tailscale-state"]) {
+  for (const name of ["openclaw-state"]) {
     const volume = resources.find((resource) => resource.type === "volume" && resource.name === name);
     const config = volume?.config as { region?: string; sizeMB?: number } | undefined;
     assert.ok(config?.region, `${name} declares a region`);
     assert.ok(config?.sizeMB, `${name} declares a size`);
-    for (const serviceName of ["openclaw", "tailscale"]) {
+    for (const serviceName of ["openclaw"]) {
       const regions = Object.keys((findService(serviceName).deploy?.multiRegionConfig ?? {}) as object);
       assert.deepEqual(regions, [config.region], `${serviceName} runs in the volume region`);
     }
@@ -82,7 +67,7 @@ test("volumes declare region and size, and services run in the same region", () 
 });
 
 test("no service is exposed publicly", () => {
-  for (const name of ["openclaw", "tailscale"]) {
+  for (const name of ["openclaw"]) {
     const service = findService(name);
     for (const key of ["domains", "networking", "tcp", "tcpProxies"]) {
       assert.equal(service[key], undefined, `${name} must not set ${key}`);
@@ -92,6 +77,5 @@ test("no service is exposed publicly", () => {
 
 test("secrets come from Railway and are never written in the file", () => {
   assert.deepEqual(findService("openclaw").variables?.OPENCLAW_GATEWAY_TOKEN, { type: "preserve" });
-  assert.deepEqual(findService("openclaw").variables?.OPENCLAW_PUBLIC_ORIGIN, { type: "preserve" });
-  assert.deepEqual(findService("tailscale").variables?.TS_AUTHKEY, { type: "preserve" });
+  assert.deepEqual(findService("openclaw").variables?.TS_AUTHKEY, { type: "preserve" });
 });

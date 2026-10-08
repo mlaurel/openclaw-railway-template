@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 
+# Tailscale runs inside this container, next to the Gateway; only its two
+# binaries are taken from the official image. Dependabot tracks this pin.
+FROM tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065 AS tailscale
+
 # The OpenClaw release this template deploys. This line is the single source of
 # truth for the version: an upgrade changes the tag and digest together and
 # nothing else. See documentation/UPGRADING.md.
@@ -11,14 +15,16 @@ FROM ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0ded1dd76939b2bf4d67ef2d13247b8b
 # hadolint ignore=DL3002,DL3066
 USER root
 
-# The Gateway listens on 8080, the PORT Railway injects when a service sets
-# none, so Railway's health check reaches it with no PORT variable.
+# The Gateway listens on loopback only (gateway.tailscale.mode=serve requires
+# it), on 18789. Tailscale Serve, which OpenClaw manages, is the only way in.
+# Railway's deploy health check reaches it through the sidecar's relay on 8080,
+# the PORT Railway injects when a service sets none.
 # OPENCLAW_HOME relocates every OpenClaw path default (state, config, agents,
 # credentials, workspace) under the Railway volume: /data/.openclaw.
 # OPENCLAW_SUPERVISOR_MODE=external tells OpenClaw that Railway owns the process
 # lifecycle, which refuses in-place self-updates and service installs.
 ENV OPENCLAW_HOME=/data \
-    OPENCLAW_GATEWAY_PORT=8080 \
+    OPENCLAW_GATEWAY_PORT=18789 \
     OPENCLAW_SUPERVISOR_MODE=external \
     OPENCLAW_NO_AUTO_UPDATE=1
 
@@ -125,8 +131,11 @@ USER root
 RUN mv /home/linuxbrew/.linuxbrew /opt/homebrew-seed \
  && ln -s /data/linuxbrew /home/linuxbrew/.linuxbrew
 
+COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscaled /usr/local/bin/
+
 COPY config/openclaw.seed.json /etc/openclaw-railway/openclaw.seed.json
 COPY scripts/entrypoint.sh /usr/local/bin/openclaw-railway-entrypoint
+COPY scripts/sidecar.mjs /usr/local/lib/openclaw-railway/sidecar.mjs
 # `railway ssh` opens a root shell. `as-node <command>` runs a command as the
 # Gateway's user, so tool logins (for example `as-node gog auth add …`) don't
 # leave root-owned files the agent can't read. The openclaw and brew wrappers in
@@ -135,9 +144,10 @@ COPY scripts/as-node.sh /usr/local/bin/as-node
 COPY scripts/openclaw-as-node.sh /usr/local/sbin/openclaw
 COPY scripts/brew-as-node.sh /usr/local/sbin/brew
 
-RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json \
+RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json /usr/local/lib/openclaw-railway/sidecar.mjs \
  && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/bin/as-node /usr/local/sbin/openclaw /usr/local/sbin/brew \
- && node /app/openclaw.mjs --version
+ && node /app/openclaw.mjs --version \
+ && tailscale version
 
 # HOME is on the volume, so tool logins and settings kept under ~ (gog's Google
 # tokens, Claude Code and Codex sessions) survive redeploys. PATH order, first
@@ -157,6 +167,20 @@ ENV HOME=/data/home \
     HOMEBREW_NO_ENV_HINTS=1 \
     HOMEBREW_CACHE=/tmp/homebrew
 
+# Tailscale, run by the entrypoint and sidecar as node in userspace mode
+# (Railway has no TUN device). Its state (node key, certificates) is on the
+# volume. The socket is the CLI's default path, so `tailscale` and OpenClaw
+# find the daemon without flags.
+#
+# TS_DEBUG_MTU: Railway's container network has a 1316-byte MTU, smaller than a
+# full Tailscale packet (1280 + 80 bytes of WireGuard/UDP/IPv6 overhead). Larger
+# packets were silently lost, which made every TLS handshake take 0.6-1.7 s and
+# capped transfers near 10 KB/s. 1236 = 1316 - 80, so tunnel packets fit.
+ENV TS_STATE_DIR=/data/tailscale \
+    TS_SOCKET=/var/run/tailscale/tailscaled.sock \
+    TS_HOSTNAME=openclaw \
+    TS_DEBUG_MTU=1236
+
 # Replaces the base image's HEALTHCHECK, which would run OpenClaw code as root.
 # Railway ignores Docker health checks; this one is for local `docker run`.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
@@ -167,6 +191,7 @@ EXPOSE 8080
 # After the entrypoint drops privileges, this is the stock image's own startup:
 # tini (PID 1) -> docker-entrypoint.mjs (runs Doctor migrations) -> Gateway.
 ENTRYPOINT ["openclaw-railway-entrypoint", "tini", "-s", "--", "node", "/app/docker-entrypoint.mjs"]
-# --bind and --auth pin the network-facing settings so a later config edit or
-# onboarding run cannot make the Gateway unreachable or unauthenticated.
-CMD ["node", "openclaw.mjs", "gateway", "--bind", "lan", "--auth", "token"]
+# --bind, --tailscale, and --auth pin the network-facing settings so a later
+# config edit or onboarding run cannot expose the Gateway differently or make it
+# unauthenticated.
+CMD ["node", "openclaw.mjs", "gateway", "--bind", "loopback", "--tailscale", "serve", "--auth", "token"]

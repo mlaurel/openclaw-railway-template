@@ -1,8 +1,7 @@
 {
   "gateway": {
     "mode": "local",
-    "bind": "lan",
-    "publicOrigin": "${OPENCLAW_PUBLIC_ORIGIN}",
+    "bind": "loopback",
     "auth": {
       "mode": "token",
       "token": {
@@ -17,7 +16,7 @@
       }
     },
     "tailscale": {
-      "mode": "off"
+      "mode": "serve"
     },
     "terminal": {
       "enabled": false
@@ -25,15 +24,6 @@
     "nodes": {
       "pairing": {
         "sshVerify": false
-      }
-    }
-  },
-  "plugins": {
-    "entries": {
-      "device-pair": {
-        "config": {
-          "publicUrl": "${OPENCLAW_PUBLIC_ORIGIN}"
-        }
       }
     }
   }
