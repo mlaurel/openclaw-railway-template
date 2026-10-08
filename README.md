@@ -68,6 +68,7 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 | [SECURITY.md](documentation/SECURITY.md) | Infrastructure controls, the security audit, recommended agent policy |
 | [UPGRADING.md](documentation/UPGRADING.md) | Upgrades, backups, rollbacks |
 | [TROUBLESHOOTING.md](documentation/TROUBLESHOOTING.md) | Symptoms and fixes |
+| [RAILWAY_TEMPLATE.md](documentation/RAILWAY_TEMPLATE.md) | The published template's readme, as shown on the Railway template page |
 | [ACCEPTANCE_CRITERIA.md](documentation/ACCEPTANCE_CRITERIA.md) | What is verified, what still needs a live deployment |
 
 ## Repository

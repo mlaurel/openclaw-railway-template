@@ -125,3 +125,7 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
   on the unmodified upstream image. See [SECURITY.md](SECURITY.md#security-audit).
 - `tailscale` works in a root `railway ssh` shell too (for example
   `tailscale status`); it talks to the daemon over its socket.
+
+## Running the tests locally
+
+- `npm run test:image` stops at the first `FROM` with `failed to fetch oauth token: denied: denied`, and `docker pull ghcr.io/openclaw/openclaw:…` says `error from registry: denied`: Docker is sending a stale GitHub Container Registry login. The OpenClaw image is public and needs no login, but a revoked or expired token stored by `docker login ghcr.io` is rejected instead of ignored, and Docker Desktop sends the stored login even with an empty `DOCKER_CONFIG`. Run `docker logout ghcr.io`, or log in again with a token that has the `read:packages` scope.
