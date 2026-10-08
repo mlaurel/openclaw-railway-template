@@ -2,7 +2,7 @@
 
 # The OpenClaw release this template deploys. This line is the single source of
 # truth for the version: an upgrade changes the tag and digest together and
-# nothing else. See docs/UPGRADING.md.
+# nothing else. See documentation/UPGRADING.md.
 FROM ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0ded1dd76939b2bf4d67ef2d13247b8b160aa5666331d4a0b0e58811182cbb8
 
 # Railway mounts volumes owned by root, so the container starts as root only
@@ -90,7 +90,7 @@ RUN set -eu; \
 # Claude Code for the coding-agent skill: a pinned baseline in
 # tools/package-lock.json, so a fresh deploy works. `as-node claude install
 # stable` puts a self-updating copy on the volume that takes precedence (see
-# docs/TOOLS.md). Its postinstall script copies the native binary
+# documentation/TOOLS.md). Its postinstall script copies the native binary
 # for this architecture into place; tools/package.json approves only that
 # package's install script (npm 12 blocks dependency scripts by default).
 COPY tools/package.json tools/package-lock.json /opt/tools/

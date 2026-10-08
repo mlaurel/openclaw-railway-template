@@ -1,7 +1,7 @@
 // Railway Infrastructure as Code for this template: two services, two volumes.
 //
 // Railway evaluates this file only when you run `railway config plan` or
-// `railway config apply`; deploys never read it. See docs/DEPLOYMENT.md.
+// `railway config apply`; deploys never read it. See documentation/DEPLOYMENT.md.
 //
 // Secrets never appear here. Variables marked preserve() keep whatever value
 // is already set in Railway, so set them with `railway variables` (or the
@@ -38,7 +38,7 @@ export default defineRailway(() => {
     build: {
       builder: "DOCKERFILE",
       dockerfilePath: "Dockerfile",
-      watchPatterns: ["Dockerfile", "config/**", "scripts/**"],
+      watchPatterns: ["Dockerfile", "config/**", "scripts/**", "tools/**"],
     },
     // OpenClaw runs one Gateway per state directory, and Railway cannot share a
     // volume between replicas: exactly one instance, in the volume's region.
@@ -63,7 +63,7 @@ export default defineRailway(() => {
       // https://openclaw.<your-tailnet>.ts.net; set it in Railway before deploying.
       OPENCLAW_PUBLIC_ORIGIN: preserve(),
       ANTHROPIC_API_KEY: preserve(),
-      // Password for gog's token file; see docs/TOOLS.md.
+      // Password for gog's token file; see documentation/TOOLS.md.
       GOG_KEYRING_PASSWORD: preserve(),
     },
   });

@@ -30,14 +30,20 @@ only on Railway's private network, and only the Tailscale service forwards to it
 
 ## The OpenClaw service
 
-The image is the official OpenClaw image plus three small files:
+The image is the official OpenClaw image plus a few small files and the tools
+skills need:
 
-- `scripts/entrypoint.sh` (45 lines, mostly comments and error messages) runs as root, validates the environment,
-  prepares the volume, writes `config/openclaw.seed.json` on first boot only, and
-  `exec`s into the stock startup as the unprivileged `node` user.
-- `scripts/openclaw-as-node.sh` makes `openclaw` typed in a root `railway ssh`
-  shell run as `node`, so operator commands cannot leave root-owned state.
+- `scripts/entrypoint.sh` (mostly comments and error messages) runs as root,
+  validates the environment, prepares the volume, writes
+  `config/openclaw.seed.json` and seeds Homebrew on first boot only, and `exec`s
+  into the stock startup as the unprivileged `node` user.
+- `scripts/as-node.sh`, plus `openclaw` and `brew` wrappers built on it, run
+  commands typed in a root `railway ssh` shell as `node`, so operator commands
+  cannot leave root-owned state.
 - `config/openclaw.seed.json` is the baseline config (below).
+- A pinned baseline of skill tools (`gh`, `gog`, Claude Code, Codex, `jq`,
+  `tmux`) and a Homebrew seed, with `HOME` on the volume so logins and updates
+  persist. See [TOOLS.md](TOOLS.md).
 
 After the privilege drop, the process tree is exactly the stock image:
 
@@ -217,4 +223,5 @@ and has no Railway domain.
   Railway pulls it; later builds reuse cached layers.
 - **Resources.** Idle memory is ≈0.9 GB in local tests. Plan on 2 GB memory and
   1 vCPU minimum; more for browser automation or heavy agent fleets. Start with a
-  5 GB volume and watch `/data` growth (media, SQLite, workspace).
+  5 GB volume and watch `/data` growth (media, SQLite, workspace, and tools you
+  install: Homebrew dependencies alone can take a few GB).
