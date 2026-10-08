@@ -1,7 +1,7 @@
-// Public webhook relay, started by sidecar.mjs when OPENCLAW_RAILWAY_WEBHOOKS
-// is on. It listens on loopback only; the entrypoint publishes it with Tailscale
-// Funnel at https://<machine>.<tailnet>.ts.net:10000, and nothing else is on
-// that port. The Gateway itself stays private (port 443 is tailnet-only).
+// Public webhook routes, served by sidecar.mjs on PORT next to the health check
+// relay when OPENCLAW_RAILWAY_WEBHOOKS is on. They become public only when the
+// service also has a Railway domain; the template ships without one. The
+// Gateway itself stays on loopback, and its dashboard stays tailnet-only.
 //
 // Routes (POST only; everything else is 404):
 //   /gmail-pubsub?token=…   Google Pub/Sub pushes for OpenClaw's Gmail watcher
@@ -14,13 +14,12 @@
 // The relay checks the hooks token itself and forwards only authenticated hook
 // requests, so failed attempts never reach the Gateway: every relayed request
 // comes from loopback, and the Gateway would otherwise count all public callers
-// as one client. Failures are limited here, per caller. Forwarded and Tailscale
-// identity headers are stripped: the Gateway rejects proxy-shaped requests on
-// its ordinary listener, and public callers must never look like tailnet users.
+// as one client. Failures are limited here, per caller. Forwarded, Railway, and Tailscale
+// headers are stripped: the Gateway rejects proxy-shaped requests on its
+// ordinary listener, and public callers must never look like tailnet users.
 import { timingSafeEqual } from "node:crypto";
-import { createServer } from "node:http";
 
-const strippedHeader = /^(host|connection|keep-alive|transfer-encoding|upgrade|te|trailer|proxy-.*|content-length|forwarded|x-forwarded-.*|x-real-ip|true-client-ip|cf-connecting-ip|tailscale-.*)$/i;
+const strippedHeader = /^(host|connection|keep-alive|transfer-encoding|upgrade|te|trailer|proxy-.*|content-length|forwarded|x-forwarded-.*|x-real-ip|true-client-ip|cf-connecting-ip|x-railway-.*|x-envoy-.*|tailscale-.*)$/i;
 const failureWindowMs = 60_000;
 const maxFailures = 20;
 const lockoutMs = 10 * 60_000;
@@ -54,27 +53,28 @@ function bearerToken(headers) {
   return match?.[1] ?? (typeof headers["x-openclaw-token"] === "string" ? headers["x-openclaw-token"] : undefined);
 }
 
-export function startWebhookRelay({ port, gatewayPort, gmailPort, hooksPath = "/hooks", hooksToken, maxBodyBytes = 1024 * 1024 }) {
-  const failures = new Map(); // client -> { count, since, lockedUntil }
+export function createWebhookHandler({ gatewayPort, gmailPort, hooksPath = "/hooks", hooksToken, maxBodyBytes = 1024 * 1024 }) {
+  const failures = new Map(); // caller -> { count, since, lockedUntil }
 
-  function isLocked(client, now) {
-    const entry = failures.get(client);
+  function isLocked(caller, now) {
+    const entry = failures.get(caller);
     return Boolean(entry && entry.lockedUntil > now);
   }
-  function recordResult(client, status, now) {
+  function recordResult(caller, status, now) {
     if (status !== 401 && status !== 403) return;
-    const entry = failures.get(client) ?? { count: 0, since: now, lockedUntil: 0 };
+    const entry = failures.get(caller) ?? { count: 0, since: now, lockedUntil: 0 };
     if (now - entry.since > failureWindowMs) Object.assign(entry, { count: 0, since: now });
     entry.count += 1;
     if (entry.count >= maxFailures) entry.lockedUntil = now + lockoutMs;
-    failures.set(client, entry);
+    failures.set(caller, entry);
   }
 
-  return createServer(async (request, response) => {
+  return async (request, response) => {
     const url = new URL(request.url, "http://relay");
-    // Funnel puts the caller's address in X-Forwarded-For; use it only to key
-    // this relay's own failure limit, then strip it.
-    const client = String(request.headers["x-forwarded-for"] ?? request.socket.remoteAddress ?? "").split(",")[0].trim();
+    // Railway's edge sets X-Real-IP and appends the caller to X-Forwarded-For;
+    // a client-supplied X-Forwarded-For value comes first, so use the last.
+    const forwarded = String(request.headers["x-forwarded-for"] ?? "").split(",").at(-1).trim();
+    const caller = String(request.headers["x-real-ip"] ?? "").trim() || forwarded || String(request.socket.remoteAddress ?? "");
     const now = Date.now();
     let target;
     const headers = {};
@@ -83,7 +83,7 @@ export function startWebhookRelay({ port, gatewayPort, gmailPort, hooksPath = "/
       response.writeHead(404).end();
       return;
     }
-    if (isLocked(client, now)) {
+    if (isLocked(caller, now)) {
       response.writeHead(429, { "retry-after": String(lockoutMs / 1000) }).end("too many failed attempts\n");
       return;
     }
@@ -106,7 +106,7 @@ export function startWebhookRelay({ port, gatewayPort, gmailPort, hooksPath = "/
         authenticated = true;
       }
       if (!authenticated) {
-        recordResult(client, 401, now);
+        recordResult(caller, 401, now);
         response.writeHead(401).end("Unauthorized\n");
         return;
       }
@@ -130,7 +130,7 @@ export function startWebhookRelay({ port, gatewayPort, gmailPort, hooksPath = "/
         body,
         signal: AbortSignal.timeout(120_000),
       });
-      recordResult(client, upstream.status, Date.now());
+      recordResult(caller, upstream.status, Date.now());
       const responseHeaders = {};
       for (const name of ["content-type", "retry-after"]) {
         const value = upstream.headers.get(name);
@@ -142,5 +142,5 @@ export function startWebhookRelay({ port, gatewayPort, gmailPort, hooksPath = "/
       const status = error.status ?? 502;
       response.writeHead(status).end(status === 413 ? "request body too large\n" : "upstream unavailable\n");
     }
-  }).listen(port, "127.0.0.1");
+  };
 }

@@ -61,18 +61,19 @@ start_gateway() {
     "$image" node openclaw.mjs gateway --bind loopback --tailscale off --auth token >/dev/null
 }
 
-# Prints the status of a request to the webhook relay (loopback, port 8790)
-# from inside the container. Extra arguments are name=value request headers;
-# METHOD overrides POST and BODY_BYTES sends a body of that many bytes.
+# Prints the status of a request to the webhook routes on PORT (8080), made from
+# another container on the network, the way Railway's edge delivers it when the
+# service has a domain. Extra arguments are name=value request headers; METHOD
+# overrides POST and BODY_BYTES sends a body of that many bytes.
 relay_status() {
   path="$1"
   shift
-  docker exec -u node "$gateway" node -e '
+  docker run --rm --network "$network" --entrypoint node "$image" -e '
     const [method, url, size, ...pairs] = process.argv.slice(1);
     const headers = { "content-type": "application/json", ...Object.fromEntries(pairs.map((pair) => pair.split(/=(.*)/s).slice(0, 2))) };
     const body = method === "POST" ? (Number(size) > 0 ? "x".repeat(Number(size)) : JSON.stringify({ text: "relay test", mode: "next-heartbeat", agentId: "main" })) : undefined;
     fetch(url, { method, headers, body }).then((response) => console.log(response.status), () => console.log("unreachable"));
-  ' "${METHOD:-POST}" "http://127.0.0.1:8790$path" "${BODY_BYTES:-0}" "$@"
+  ' "${METHOD:-POST}" "http://$(container_address "$gateway"):8080$path" "${BODY_BYTES:-0}" "$@"
 }
 
 container_address() {
@@ -124,26 +125,6 @@ gateway_cli() {
 
 root_owned_state() {
   docker exec "$gateway" find /data -user root
-}
-
-# Prints the ports Tailscale Funnel exposes in a container, comma-separated.
-funnel_ports() {
-  docker exec "$1" as-node tailscale serve status --json | node -e '
-    let input = "";
-    process.stdin.on("data", (chunk) => (input += chunk)).on("end", () => {
-      const allow = JSON.parse(input || "{}").AllowFunnel ?? {};
-      console.log(Object.keys(allow).filter((key) => allow[key]).sort().join(","));
-    });'
-}
-
-# Prints the public IPv4 address of a Tailscale Funnel name, from public DNS.
-public_address() {
-  docker run --rm --entrypoint node "$image" -e '
-    const { Resolver } = require("node:dns").promises;
-    const resolver = new Resolver();
-    resolver.setServers(["8.8.8.8"]);
-    resolver.resolve4(process.argv[1]).then((addresses) => console.log(addresses[0]), () => console.log(""));
-  ' "$1"
 }
 
 # Prints a field of `tailscale status --json` in a container.
@@ -245,8 +226,8 @@ expect_refusal "refuses hooks.gmail.tailscale.mode funnel, which would publish p
   -v "$run_id-gmail-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
 relay_without_opt_in="$(docker run --rm -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 -e OPENCLAW_GATEWAY_PORT=18789 --user node --entrypoint sh "$image" -c '
   node /usr/local/lib/openclaw-railway/sidecar.mjs & sleep 2
-  node -e "fetch(\"http://127.0.0.1:8790/hooks/x\", { method: \"POST\" }).then(() => console.log(\"listening\"), () => console.log(\"off\"))"')"
-check "the webhook relay is off unless OPENCLAW_RAILWAY_WEBHOOKS is set" '[ "$relay_without_opt_in" = off ]'
+  node -e "fetch(\"http://127.0.0.1:8080/hooks/x\", { method: \"POST\" }).then((response) => console.log(response.status), () => console.log(\"unreachable\"))"')"
+check "webhook routes are off (404) unless OPENCLAW_RAILWAY_WEBHOOKS is set" '[ "$relay_without_opt_in" = 404 ]'
 
 log "first boot on an empty volume"
 start_gateway
@@ -322,7 +303,7 @@ audit_problems() {
 check "the security audit has no critical findings and no warnings beyond trusted_proxies_missing" \
   '[ "$(audit_problems)" = "warn gateway.trusted_proxies_missing" ]'
 
-log "public webhook relay (loopback side; Funnel is tested in the live tier)"
+log "webhook routes on PORT (public only with a Railway domain)"
 gateway_cli config set hooks.enabled true >/dev/null 2>&1
 gateway_cli config set hooks.token '${OPENCLAW_HOOKS_TOKEN}' >/dev/null 2>&1
 gateway_cli config set hooks.allowedAgentIds '["main"]' --strict-json >/dev/null 2>&1
@@ -342,9 +323,11 @@ check "a hook with a wrong path token is refused (401)" '[ "$(relay_status /hook
 check "spoofed forwarded and Tailscale identity headers are stripped, not trusted (200)" \
   '[ "$(relay_status /hooks/wake "authorization=Bearer $hooks_token" tailscale-user-login=someone@example.com x-forwarded-for=100.64.0.9)" = 200 ]'
 check "GET is refused (404)" '[ "$(METHOD=GET relay_status /hooks/wake)" = 404 ]'
-for path in / /control-ui-config.json /v1/models "/hooks/../control-ui-config.json/$hooks_token"; do
+for path in / /control-ui-config.json /v1/models; do
   check "the relay refuses $path (404)" '[ "$(relay_status "$path" "authorization=Bearer $hooks_token")" = 404 ]'
 done
+check "the relay refuses a path that climbs out of /hooks (404)" \
+  '[ "$(relay_status "/hooks/../control-ui-config.json/$hooks_token")" = 404 ]'
 check "a body over 1 MiB is refused (413)" \
   '[ "$(BODY_BYTES=2000000 relay_status /hooks/wake "authorization=Bearer $hooks_token")" = 413 ]'
 for attempt in $(seq 1 20); do relay_status /hooks/wake x-forwarded-for=203.0.113.7 >/dev/null; done
@@ -352,7 +335,7 @@ check "20 failures from one caller lock that caller out (429)" \
   '[ "$(relay_status /hooks/wake x-forwarded-for=203.0.113.7 "authorization=Bearer $hooks_token")" = 429 ]'
 check "other callers are not locked out" \
   '[ "$(relay_status /hooks/wake x-forwarded-for=198.51.100.2 "authorization=Bearer $hooks_token")" = 200 ]'
-check "the relay listens on loopback only" '[ "$(PORT=8790 remote_status /hooks/wake)" = unreachable ]'
+check "health checks still work alongside webhook routes" '[ "$(remote_status /healthz)" = 200 ]'
 
 log "state survives a restart"
 # /proc/1/environ belongs to node, so read it as node.
@@ -419,8 +402,7 @@ check "the container stops when tailscaled dies, so Railway restarts both" \
 if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   log "live: Tailscale Serve on a real tailnet"
   docker run -d --name "$live" -v "$run_id-live-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
-    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$live_hostname" \
-    -e OPENCLAW_RAILWAY_WEBHOOKS=on -e OPENCLAW_HOOKS_TOKEN="$hooks_token" "$image" >/dev/null
+    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$live_hostname" "$image" >/dev/null
   attempt=0
   until docker logs "$live" 2>&1 | grep -qE "serve enabled|serve failed" || [ "$attempt" -ge 90 ]; do
     sleep 2
@@ -443,34 +425,6 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
         const setup = JSON.parse(input.slice(input.indexOf(\"{\")));
         process.exit(setup.gatewayUrl === \"wss://$live_name\" && setup.access === \"full\" ? 0 : 1);
       });"'
-  check "public webhooks are announced at https://$live_name:10000" \
-    'docker logs "$live" 2>&1 | grep -F "public webhooks on at https://$live_name:10000"'
-  check "Tailscale Funnel is on for port 10000 and nowhere else" '[ "$(funnel_ports "$live")" = "$live_name:10000" ]'
-  docker exec "$live" openclaw config set hooks.enabled true >/dev/null 2>&1
-  docker exec "$live" openclaw config set hooks.token '${OPENCLAW_HOOKS_TOKEN}' >/dev/null 2>&1
-  docker exec "$live" openclaw config set hooks.allowedAgentIds '["main"]' --strict-json >/dev/null 2>&1
-  public_ip=""
-  attempt=0
-  until [ -n "$public_ip" ] || [ "$attempt" -ge 30 ]; do
-    public_ip="$(public_address "$live_name")"
-    [ -n "$public_ip" ] || sleep 2
-    attempt=$((attempt + 1))
-  done
-  public_status() {
-    curl -s -o /dev/null -w "%{http_code}" --max-time 60 --resolve "$live_name:$1:$public_ip" "$@"
-  }
-  attempt=0
-  until [ "$(public_status 10000 -X POST -H "authorization: Bearer $hooks_token" -H "content-type: application/json" \
-    --data '{"text":"public webhook test","mode":"next-heartbeat","agentId":"main"}' "https://$live_name:10000/hooks/wake")" = 200 ] || [ "$attempt" -ge 20 ]; do
-    sleep 3
-    attempt=$((attempt + 1))
-  done
-  check "a webhook reaches the Gateway from the public internet through Funnel (:10000)" \
-    '[ "$(public_status 10000 -X POST -H "authorization: Bearer $hooks_token" -H "content-type: application/json" --data "{\"text\":\"public webhook test\",\"mode\":\"next-heartbeat\",\"agentId\":\"main\"}" "https://$live_name:10000/hooks/wake")" = 200 ]'
-  check "a public webhook without the token is refused (401)" \
-    '[ "$(public_status 10000 -X POST -H "content-type: application/json" --data "{}" "https://$live_name:10000/hooks/wake")" = 401 ]'
-  check "the Gateway is not reachable from the public internet (:443)" \
-    '[ -n "$public_ip" ] && [ "$(public_status 443 "https://$live_name/healthz")" = 000 ]'
   if [ "${TAILSCALE_TEST_ON_TAILNET:-}" = 1 ]; then
     check "the dashboard answers over the tailnet at https://$live_name/" \
       '[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "https://$live_name/healthz")" = 200 ]'
@@ -504,16 +458,8 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     attempt=$((attempt + 1))
   done
   check "killing tailscaled stops the whole container" '[ "$(docker inspect -f "{{.State.Running}}" "$live")" = false ]'
-  # The same volume without OPENCLAW_RAILWAY_WEBHOOKS: Funnel must be removed.
-  docker rm -f "$live" >/dev/null
-  docker run -d --name "$live" -v "$run_id-live-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
-    -e TS_HOSTNAME="$live_hostname" "$image" >/dev/null
-  attempt=0
-  until docker logs "$live" 2>&1 | grep -qE "serve enabled|serve failed" || [ "$attempt" -ge 60 ]; do
-    sleep 2
-    attempt=$((attempt + 1))
-  done
-  check "without OPENCLAW_RAILWAY_WEBHOOKS, Funnel is turned off again" '[ -z "$(funnel_ports "$live")" ]'
+  docker start "$live" >/dev/null
+  sleep 15
 else
   log "live tier skipped (set TAILSCALE_TEST_AUTHKEY to a reusable, ephemeral Tailscale auth key to run it)"
 fi

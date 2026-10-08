@@ -70,8 +70,8 @@ layout_problem="$(node -e '
 ' "$config_file" 2>/dev/null || true)"
 # OpenClaw's own Gmail watcher can publish its endpoint with Tailscale, but it
 # runs `tailscale funnel` on port 443, which would put this Gateway's dashboard
-# on the public internet. This template publishes webhooks on port 10000
-# instead (OPENCLAW_RAILWAY_WEBHOOKS), so that setting must stay off.
+# on the public internet. This template publishes webhooks through a Railway
+# domain instead (OPENCLAW_RAILWAY_WEBHOOKS), so that setting must stay off.
 gmail_tailscale_mode="$(node -e '
   const config = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   console.log(config.hooks?.gmail?.tailscale?.mode ?? "off");
@@ -136,24 +136,6 @@ if [ -z "$without_tailscale" ]; then
     echo "openclaw-railway: logged in to Tailscale as $TS_HOSTNAME"
   fi
 
-  # Public webhooks (opt-in): Tailscale Funnel on port 10000, to the sidecar's
-  # webhook relay only. Funnel exposes everything on a port, so nothing else may
-  # use 10000. Funnel settings persist in Tailscale's state, so reconcile them
-  # on every boot: on when OPENCLAW_RAILWAY_WEBHOOKS is set, off otherwise.
-  case "${OPENCLAW_RAILWAY_WEBHOOKS:-}" in
-    on | 1 | true | yes)
-      if ! as_node tailscale funnel --bg --yes --https=10000 "http://127.0.0.1:${OPENCLAW_RAILWAY_WEBHOOK_RELAY_PORT:-8790}" >/dev/null; then
-        fail "OPENCLAW_RAILWAY_WEBHOOKS is on, but Tailscale refused to enable Funnel on port 10000. The tailnet policy must give this machine the funnel node attribute, and the tailnet needs HTTPS certificates. See documentation/WEBHOOKS.md."
-      fi
-      dns_name="$(as_node tailscale status --json | node -e '
-        let input = "";
-        process.stdin.on("data", (chunk) => (input += chunk)).on("end", () => console.log(JSON.parse(input).Self.DNSName.replace(/\.$/, "")));')"
-      echo "openclaw-railway: public webhooks on at https://$dns_name:10000 (Tailscale Funnel): POST /hooks/<name>, POST /gmail-pubsub"
-      ;;
-    *)
-      as_node tailscale funnel --https=10000 off >/dev/null 2>&1 || true
-      ;;
-  esac
 fi
 unset TS_AUTHKEY
 
