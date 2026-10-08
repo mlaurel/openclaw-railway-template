@@ -301,10 +301,25 @@ restart policy, volume mount paths, and template *functions* such as
 marks every variable required. That is why both services listen on Railway's
 default port instead of taking a `PORT` variable. To regenerate:
 
+It also keeps variable *references*, even mixed with literal text, so the
+template asks only for `TAILNET_DNS_NAME` and pre-fills
+`OPENCLAW_PUBLIC_ORIGIN` as `https://openclaw.${{TAILNET_DNS_NAME}}`. It drops
+variable descriptions; add those in the template editor after generating.
+
+`templateGenerate` on a project that already has a template **updates that
+template in place**, even when it is published. Test changes with a separate
+scratch source project first:
+
 1. In a project whose services mirror `.railway/railway.ts`, set
-   `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}` and
-   placeholder values for `OPENCLAW_PUBLIC_ORIGIN` and `TS_AUTHKEY`.
+   `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}`,
+   `OPENCLAW_PUBLIC_ORIGIN` to `https://openclaw.${{TAILNET_DNS_NAME}}`, and
+   placeholder values for `TAILNET_DNS_NAME` and `TS_AUTHKEY`.
 2. `railway api 'mutation($p: String!) { templateGenerate(input: { projectId: $p }) { id code serializedConfig } }' --variables '{"p":"<project-id>"}'`
-3. Inspect `serializedConfig`: no secret values, both volumes, `rootDirectory: "tailscale"`.
-4. Deploy it into a scratch project (`railway deploy -t <code> -v …`) and wait
-   for `openclaw` to turn healthy before publishing.
+3. Inspect `serializedConfig`: no secret values, both volumes, `rootDirectory: "tailscale"`,
+   and the `OPENCLAW_PUBLIC_ORIGIN` reference.
+4. Deploy it into another scratch project
+   (`railway deploy -t <code> -v openclaw.TAILNET_DNS_NAME=… -v tailscale.TS_AUTHKEY=…`)
+   and wait for `openclaw` to turn healthy.
+5. Make the same change in the real source project and regenerate there, which
+   updates the published template. Re-add the variable descriptions in the
+   template editor.

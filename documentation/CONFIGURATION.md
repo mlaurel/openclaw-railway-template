@@ -38,7 +38,8 @@ and containerboot's health endpoint). The entrypoint refuses to start if a
 
 | Variable | Required | Secret | Purpose |
 | --- | --- | --- | --- |
-| `OPENCLAW_PUBLIC_ORIGIN` | yes | no | `https://openclaw.<your-tailnet>.ts.net`. The baseline config sets `gateway.publicOrigin` (the browser-origin allowlist) and the mobile pairing URL from it. The entrypoint refuses to start if it is missing or not a `https://….ts.net` address. |
+| `OPENCLAW_PUBLIC_ORIGIN` | yes | no | `https://openclaw.<your-tailnet>.ts.net`. The baseline config sets `gateway.publicOrigin` (the browser-origin allowlist) and the mobile pairing URL from it. The entrypoint refuses to start if it is missing or not a `https://….ts.net` address. The Railway template sets it to `https://openclaw.${{TAILNET_DNS_NAME}}`. |
+| `TAILNET_DNS_NAME` | template only | no | Your tailnet's DNS name, for example `tail1234.ts.net`. Only the Railway template uses it, to build `OPENCLAW_PUBLIC_ORIGIN`; the Gateway never reads it. |
 | `OPENCLAW_GATEWAY_TOKEN` | yes | **yes** | Gateway authentication secret, ≥ 32 characters. Generate with `openssl rand -hex 32`. |
 | Provider key, e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | for the provider you choose | **yes** | Model credential. Onboarding stores an env reference to it, not the value. |
 | `GOG_KEYRING_PASSWORD` | for the gog skill | **yes** | Password for `gog`'s token file on the volume. See [TOOLS.md](TOOLS.md#google-gog). |

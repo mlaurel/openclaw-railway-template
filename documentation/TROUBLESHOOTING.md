@@ -11,7 +11,7 @@ with `openclaw-railway:`.
 | `openclaw-railway: OPENCLAW_GATEWAY_TOKEN is not set` (exit 64) | Missing variable. | [DEPLOYMENT.md step 3](DEPLOYMENT.md#3-configure-the-gateway). |
 | `… must be at least 32 characters` | Weak token. | `openssl rand -hex 32`. |
 | `PORT is … but the Gateway listens on 8080` | A `PORT` variable is set to something else. | Delete the `PORT` variable; Railway then injects 8080. |
-| `OPENCLAW_PUBLIC_ORIGIN is not set` / `must be the Gateway's tailnet HTTPS address` | Missing or malformed origin. | Set `OPENCLAW_PUBLIC_ORIGIN=https://openclaw.<your-tailnet>.ts.net`. |
+| `OPENCLAW_PUBLIC_ORIGIN is not set` / `must be the Gateway's tailnet HTTPS address` | Missing or malformed origin. With the Railway template, usually a mistyped `TAILNET_DNS_NAME` (it must look like `tail1234.ts.net`). | Fix `TAILNET_DNS_NAME`, or set `OPENCLAW_PUBLIC_ORIGIN=https://openclaw.<your-tailnet>.ts.net` directly. |
 | `the entrypoint must start as root` | `RAILWAY_RUN_UID` or a user override is set. | Remove it. The entrypoint drops to `node` itself. |
 | `warning: /data is not a mounted volume` | No volume at `/data`. State will be lost. | Attach the volume at `/data` (`requiredMountPath` normally blocks this deploy). |
 | `Doctor could not enter maintenance … failed to acquire gateway state ownership` | Usually a permission problem (it shows up with EACCES on a root-owned volume), or another Gateway really holds the state. | Redeploy: the entrypoint repairs ownership on every start. Never delete lock files. |
@@ -75,7 +75,7 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `tailscale` deploy unhealthy; log shows `To authenticate, visit:` | Not logged in. | Set `TS_AUTHKEY`, or open the URL. [TAILSCALE.md](TAILSCALE.md#2-authenticate-the-node) |
-| Machine is `openclaw-1`, not `openclaw` | Name already taken. | Remove the stale machine, or set `TS_HOSTNAME`. |
+| Machine is `openclaw-1`, not `openclaw`; the dashboard rejects the browser's origin | Name already taken, so `OPENCLAW_PUBLIC_ORIGIN` points at the wrong machine. | Remove the stale machine and rename this one to `openclaw` in the admin console, or set `OPENCLAW_PUBLIC_ORIGIN` to the machine's real name. Check it with `railway ssh --service tailscale -- tailscale status --json`, field `Self.DNSName`. |
 | `curl https://openclaw.<tailnet>.ts.net` times out | Access policy doesn't allow your device, or the node is offline. | Check the policy grant and `tailscale ping openclaw`. |
 | HTTPS fails but `http://openclaw.<tailnet>.ts.net:18789` works | Tailnet HTTPS certificates not enabled. | Admin console → DNS → HTTPS Certificates. |
 | Tailscale log: `localbackend: failed to TCP proxy port … to openclaw.railway.internal:8080` | The Gateway is down, the service isn't named `openclaw`, or the environment is a legacy IPv6-only one. | Check the `openclaw` service; rename it; deploy into an environment created after 2025-10-16. |

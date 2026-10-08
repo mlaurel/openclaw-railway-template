@@ -27,15 +27,19 @@ Open the [OpenClaw Private Gateway template](https://railway.com/deploy/openclaw
 
 | Variable | Value |
 | --- | --- |
-| `OPENCLAW_PUBLIC_ORIGIN` | `https://openclaw.<your-tailnet>.ts.net` |
+| `TAILNET_DNS_NAME` | your tailnet's DNS name from the admin console's **DNS** page, for example `tail1234.ts.net` (no `https://`, no machine name) |
 | `TS_AUTHKEY` | the key from step 1 |
 
-The Gateway token (`OPENCLAW_GATEWAY_TOKEN`) is generated for you. Wait for both
+The template fills in the rest: the Gateway token (`OPENCLAW_GATEWAY_TOKEN`)
+is generated, and `OPENCLAW_PUBLIC_ORIGIN` becomes
+`https://openclaw.<TAILNET_DNS_NAME>`. Wait for both
 services to turn green (≈4 minutes; the first build pulls a large image). A
 machine named `openclaw` then appears in your tailnet.
 
-If the name is already taken, Tailscale calls it `openclaw-1`; set
-`OPENCLAW_PUBLIC_ORIGIN` to match.
+If the name is already taken, Tailscale calls it `openclaw-1` and the origin no
+longer matches. Either rename the machine to `openclaw` in the admin console
+(after removing the old one), or change `OPENCLAW_PUBLIC_ORIGIN` on the
+`openclaw` service to `https://openclaw-1.<TAILNET_DNS_NAME>`.
 
 ## 3. Link the CLI and open SSH
 

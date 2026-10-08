@@ -21,10 +21,18 @@ gateway_token="${OPENCLAW_GATEWAY_TOKEN:-}"
 
 # The baseline config reads gateway.publicOrigin from this variable; OpenClaw
 # refuses to start with an invalid origin, so fail here with a clearer message.
-case "${OPENCLAW_PUBLIC_ORIGIN:-}" in
-  https://*.ts.net | https://*.ts.net:*) ;;
-  "") fail "OPENCLAW_PUBLIC_ORIGIN is not set. Set it to the Gateway's tailnet address, for example https://openclaw.your-tailnet.ts.net" ;;
-  *) fail "OPENCLAW_PUBLIC_ORIGIN must be the Gateway's tailnet HTTPS address, for example https://openclaw.your-tailnet.ts.net (got: $OPENCLAW_PUBLIC_ORIGIN)" ;;
+# The Railway template builds it as https://openclaw.${{TAILNET_DNS_NAME}}, so
+# a mistyped tailnet name shows up here too.
+public_origin="${OPENCLAW_PUBLIC_ORIGIN:-}"
+origin_hint="for example https://openclaw.tail1234.ts.net. If you deployed the Railway template, check TAILNET_DNS_NAME: it is your tailnet's DNS name from the Tailscale admin console's DNS page, such as tail1234.ts.net, with no https:// and no machine name"
+[ -n "$public_origin" ] || fail "OPENCLAW_PUBLIC_ORIGIN is not set. Set it to the Gateway's tailnet address, $origin_hint"
+origin_host="${public_origin#https://}"
+invalid_origin="OPENCLAW_PUBLIC_ORIGIN must be the Gateway's tailnet HTTPS address (got: $public_origin), $origin_hint"
+[ "$origin_host" != "$public_origin" ] || fail "$invalid_origin"
+case "$origin_host" in
+  */* | *@* | *" "*) fail "$invalid_origin" ;;
+  *.ts.net | *.ts.net:*) ;;
+  *) fail "$invalid_origin" ;;
 esac
 
 if [ -n "${PORT:-}" ] && [ "$PORT" != "$OPENCLAW_GATEWAY_PORT" ]; then

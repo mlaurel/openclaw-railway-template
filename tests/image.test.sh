@@ -146,6 +146,8 @@ expect_refusal "refuses to start without OPENCLAW_PUBLIC_ORIGIN" "OPENCLAW_PUBLI
   -e OPENCLAW_GATEWAY_TOKEN="$token"
 expect_refusal "refuses an OPENCLAW_PUBLIC_ORIGIN that isn't a tailnet HTTPS address" "must be the Gateway's tailnet HTTPS address" \
   -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN=openclaw.example-tailnet.ts.net
+expect_refusal "refuses an origin built from a tailnet name that includes https:// (template mistake)" "check TAILNET_DNS_NAME" \
+  -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN=https://openclaw.https://example-tailnet.ts.net
 expect_refusal "refuses a PORT that would point Railway's health check elsewhere" "Delete the PORT variable" \
   -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_PUBLIC_ORIGIN="$public_origin" -e PORT=18789
 expect_refusal "refuses to start as a non-root user it cannot prepare the volume with" "must start as root" \
