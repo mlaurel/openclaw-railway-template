@@ -31,6 +31,10 @@ if [ "${PORT:-8080}" = "$OPENCLAW_GATEWAY_PORT" ]; then
   fail "PORT is ${PORT:-8080}, the Gateway's own loopback port. Delete the PORT variable (Railway then uses 8080 for the health check relay)."
 fi
 
+# The name shown in OpenClaw's machine picker (see the Dockerfile's display-name
+# patch): the Tailscale machine name unless set explicitly.
+export OPENCLAW_MACHINE_DISPLAY_NAME="${OPENCLAW_MACHINE_DISPLAY_NAME:-$TS_HOSTNAME}"
+
 # For this repository's integration tests only: run without Tailscale, so CI
 # can exercise the Gateway with no tailnet. The Gateway is then unreachable
 # from outside the container.

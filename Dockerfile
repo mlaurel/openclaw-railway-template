@@ -26,8 +26,7 @@ USER root
 ENV OPENCLAW_HOME=/data \
     OPENCLAW_GATEWAY_PORT=18789 \
     OPENCLAW_SUPERVISOR_MODE=external \
-    OPENCLAW_NO_AUTO_UPDATE=1 \
-    OPENCLAW_MACHINE_DISPLAY_NAME=Gowanus
+    OPENCLAW_NO_AUTO_UPDATE=1
 
 # GitHub CLI, which OpenClaw drives for Settings > Profile > GitHub connections
 # (device sign-in). OpenClaw keeps each connection's credentials under the state
@@ -134,6 +133,10 @@ RUN mv /home/linuxbrew/.linuxbrew /opt/homebrew-seed \
 
 COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscaled /usr/local/bin/
 
+# The Gateway's name in OpenClaw's machine picker. OpenClaw 2026.9.8 falls back
+# to the container hostname, which Railway changes on every deploy; this patch
+# reads OPENCLAW_MACHINE_DISPLAY_NAME first. The entrypoint defaults it to the
+# Tailscale machine name; set it as a Railway variable to choose another.
 # Keep this patch in .dockerignore's build-context allowlist.
 COPY scripts/patch-machine-display-name.mjs /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
 RUN node /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs

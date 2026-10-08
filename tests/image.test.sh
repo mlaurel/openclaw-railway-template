@@ -277,6 +277,10 @@ log "state survives a restart"
 # /proc/1/environ belongs to node, so read it as node.
 check "HOME is on the volume for the Gateway" \
   'docker exec "$gateway" as-node sh -c "tr \"\\0\" \"\\n\" < /proc/1/environ" | grep -x HOME=/data/home'
+check "the machine display name defaults to the Tailscale machine name" \
+  'docker exec "$gateway" as-node sh -c "tr \"\\0\" \"\\n\" < /proc/1/environ" | grep -x OPENCLAW_MACHINE_DISPLAY_NAME=openclaw'
+check "the display-name patch is applied to OpenClaw's machine-name fallback" \
+  'docker exec "$gateway" sh -c "grep -l OPENCLAW_MACHINE_DISPLAY_NAME /app/dist/machine-name-*.mjs"'
 check "HOME is on the volume in a root shell too" '[ "$(docker exec "$gateway" sh -c "echo \$HOME")" = /data/home ]'
 docker exec "$gateway" as-node sh -c 'echo kept > "$HOME/persist-check"'
 gateway_cli config set gateway.controlUi.communityInvite false >/dev/null 2>&1

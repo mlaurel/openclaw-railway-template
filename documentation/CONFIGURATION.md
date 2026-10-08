@@ -43,6 +43,7 @@ reach. The entrypoint refuses to start if `PORT` is `18789`.
 | `TS_AUTHKEY` | on first boot | **yes** | Tailscale auth key. Used once: on first boot, or after the machine was removed from the tailnet. Afterwards the node key on the volume logs in and this is never read. The entrypoint passes it to `tailscale up` in a file, then removes it from the environment before the Gateway starts. See [TAILSCALE.md](TAILSCALE.md). |
 | `TS_HOSTNAME` | no | no | Overrides the machine name (default `openclaw`). Takes effect on the next login. |
 | Provider key, e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | for the provider you choose | **yes** | Model credential. Onboarding stores an env reference to it, not the value. |
+| `OPENCLAW_MACHINE_DISPLAY_NAME` | no | no | The Gateway's name in OpenClaw's machine picker. Defaults to `TS_HOSTNAME` (`openclaw`); without the image's patch OpenClaw would show Railway's per-deploy container hostname. |
 | `GOG_KEYRING_PASSWORD` | for the gog skill | **yes** | Password for `gog`'s token file on the volume. See [TOOLS.md](TOOLS.md#google-gog). |
 | `TELEGRAM_BOT_TOKEN` | for Telegram | **yes** | Bot token from @BotFather. Its presence enables Telegram (DM pairing, allowlisted groups). |
 
