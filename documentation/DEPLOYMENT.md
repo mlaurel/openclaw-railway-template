@@ -321,6 +321,16 @@ variable descriptions. That is why the service takes no `PORT` variable and
 relies on Railway's default. The template asks only for `TS_AUTHKEY`; it
 generates `OPENCLAW_GATEWAY_TOKEN`.
 
+**The template's readme** (the text on the template page) lives in [RAILWAY_TEMPLATE.md](RAILWAY_TEMPLATE.md). Railway strips anything that looks like an HTML tag when it saves the readme, even inside backticks, so write placeholders as `your-tailnet`, never `<tailnet>`; `npm run test:railway-config` checks this. To publish a change to the readme, run from the repository root:
+
+```bash
+railway api 'mutation($id: String!, $i: TemplatePublishInput!) { templatePublish(id: $id, input: $i) { status } }' \
+  --variables "$(jq -n --rawfile readme documentation/RAILWAY_TEMPLATE.md \
+    '{id: "<template-id>", i: {category: "AI/ML", description: "Private OpenClaw Gateway, reachable only over your Tailscale tailnet", readme: $readme}}')"
+```
+
+`railway api 'query { template(code: "openclaw-private-gateway") { id readme } }'` prints the template's ID and shows the published readme afterwards.
+
 **Small changes** (variables, descriptions, defaults): edit the published
 template directly. Railway dashboard → workspace **Templates** → the template →
 **Edit** → **Architecture**, open the service's **Variables**, make the change,

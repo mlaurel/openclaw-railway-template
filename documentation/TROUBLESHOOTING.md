@@ -139,3 +139,7 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 | `gog-login`: `no refresh token received; try again with --force-consent` | The account already granted these scopes to the project, so Google skipped the consent screen. | Rerun `gog-login` with `--force-consent`. |
 | Gmail watcher can't read its token | `GOG_KEYRING_PASSWORD` isn't set as a Railway variable; the watcher runs without a terminal. | Set it to `gog`'s keyring password. |
 | A portal shows "Waiting for the app on port …" | The development server isn't running; a server started in the background by an agent turn run from the CLI didn't outlive the turn. | Start the server again (or ask the agent from the dashboard or a chat); the portal reconnects. |
+
+## Running the tests locally
+
+- `npm run test:image` stops at the first `FROM` with `failed to fetch oauth token: denied: denied`, and `docker pull ghcr.io/openclaw/openclaw:…` says `error from registry: denied`: Docker is sending a stale GitHub Container Registry login. The OpenClaw image is public and needs no login, but a revoked or expired token stored by `docker login ghcr.io` is rejected instead of ignored, and Docker Desktop sends the stored login even with an empty `DOCKER_CONFIG`. Run `docker logout ghcr.io`, or log in again with a token that has the `read:packages` scope.
