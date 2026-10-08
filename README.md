@@ -25,6 +25,9 @@ reachable only through Tailscale.
 - **Tools for skills included.** `gh`, `gog`, Claude Code, Codex, `jq`, `tmux`,
   and ImageMagick (for iPhone HEIC photos) ship as a pinned baseline; Homebrew
   and `npm install -g` add or update tools on the volume.
+- **Opt-in webhooks.** With a Railway domain and `OPENCLAW_RAILWAY_WEBHOOKS=on`,
+  outside services can call `POST /hooks/<name>` and Gmail can push new mail,
+  while the dashboard stays tailnet-only. See [WEBHOOKS.md](documentation/WEBHOOKS.md).
 
 ```mermaid
 flowchart LR
@@ -63,6 +66,7 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 | [ARCHITECTURE.md](documentation/ARCHITECTURE.md) | Design, access options compared, why proxy attribution can't fail, what Railway owns |
 | [CONFIGURATION.md](documentation/CONFIGURATION.md) | Every variable and setting, build-time vs runtime, what lives on the volume |
 | [TOOLS.md](documentation/TOOLS.md) | CLI tools for skills, logging them in, keeping them current, adding more |
+| [WEBHOOKS.md](documentation/WEBHOOKS.md) | Opt-in public webhooks and Gmail push, with a restricted reader agent |
 | [TAILSCALE.md](documentation/TAILSCALE.md) | Access policy, auth keys, tags, key expiry, rotation |
 | [DESKTOP.md](documentation/DESKTOP.md) | Connecting and pairing the macOS app |
 | [SECURITY.md](documentation/SECURITY.md) | Infrastructure controls, the security audit, recommended agent policy |
@@ -79,6 +83,7 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 | `scripts/entrypoint.sh` | Environment checks, volume preparation, first-boot seeding, Tailscale login, privilege drop |
 | `scripts/gog-login.sh` | `gog-login`: Google sign-in for the gog skill through the tailnet (see [TOOLS.md](documentation/TOOLS.md#google-gog)) |
 | `scripts/sidecar.mjs` | Runs `tailscaled` (stops the container if it exits) and relays Railway's health check to the loopback Gateway |
+| `scripts/webhook-relay.mjs` | Opt-in webhook routes on the same port: token check, lockout, size cap |
 | `scripts/as-node.sh` | `as-node <command>`: run a command as `node` from a root `railway ssh` shell |
 | `scripts/openclaw-as-node.sh` | Runs the OpenClaw CLI through `as-node` |
 | `scripts/brew-as-node.sh` | Runs Homebrew through `as-node` (Homebrew refuses root) |

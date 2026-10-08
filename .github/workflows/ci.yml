@@ -25,6 +25,8 @@ jobs:
         run: npm run test:railway-config
       - name: Validate JSON configuration
         run: jq empty config/openclaw.seed.json
+      - name: Check sidecar scripts parse
+        run: node --check scripts/sidecar.mjs && node --check scripts/webhook-relay.mjs
       - name: ShellCheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 \

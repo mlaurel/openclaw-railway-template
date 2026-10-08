@@ -68,6 +68,17 @@ layout_problem="$(node -e '
   if (gateway.bind !== "loopback" || gateway.tailscale?.mode !== "serve" || "publicOrigin" in gateway
       || config.plugins?.entries?.["device-pair"]?.config?.publicUrl !== undefined) console.log("old");
 ' "$config_file" 2>/dev/null || true)"
+# OpenClaw's own Gmail watcher can publish its endpoint with Tailscale, but it
+# runs `tailscale funnel` on port 443, which would put this Gateway's dashboard
+# on the public internet. This template publishes webhooks through a Railway
+# domain instead (OPENCLAW_RAILWAY_WEBHOOKS), so that setting must stay off.
+gmail_tailscale_mode="$(node -e '
+  const config = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  console.log(config.hooks?.gmail?.tailscale?.mode ?? "off");
+' "$config_file" 2>/dev/null || echo off)"
+if [ "$gmail_tailscale_mode" != off ]; then
+  fail "hooks.gmail.tailscale.mode is $gmail_tailscale_mode. OpenClaw would run Tailscale $gmail_tailscale_mode on port 443 and expose the Gateway. Set it off (openclaw config set hooks.gmail.tailscale.mode off) and publish the Gmail endpoint with OPENCLAW_RAILWAY_WEBHOOKS instead. See documentation/WEBHOOKS.md."
+fi
 if [ "$layout_problem" = old ]; then
   fail "$config_file is set up for the previous layout (a separate tailscale service). Migrate it once from a shell on this volume, then redeploy: openclaw config set gateway.bind loopback && openclaw config set gateway.tailscale.mode serve && openclaw config unset gateway.publicOrigin && openclaw config unset plugins.entries.device-pair. See documentation/UPGRADING.md."
 fi
@@ -124,6 +135,7 @@ if [ -z "$without_tailscale" ]; then
     rm -f "$key_file"
     echo "openclaw-railway: logged in to Tailscale as $TS_HOSTNAME"
   fi
+
 fi
 unset TS_AUTHKEY
 

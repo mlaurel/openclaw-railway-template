@@ -143,7 +143,7 @@ RUN node /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
 
 COPY config/openclaw.seed.json /etc/openclaw-railway/openclaw.seed.json
 COPY scripts/entrypoint.sh /usr/local/bin/openclaw-railway-entrypoint
-COPY scripts/sidecar.mjs /usr/local/lib/openclaw-railway/sidecar.mjs
+COPY scripts/sidecar.mjs scripts/webhook-relay.mjs /usr/local/lib/openclaw-railway/
 # `railway ssh` opens a root shell. `as-node <command>` runs a command as the
 # Gateway's user, so tool logins (for example `as-node gog auth add …`) don't
 # leave root-owned files the agent can't read. The openclaw and brew wrappers in
@@ -155,7 +155,7 @@ COPY scripts/brew-as-node.sh /usr/local/sbin/brew
 # a 127.0.0.1 redirect. See documentation/TOOLS.md.
 COPY scripts/gog-login.sh /usr/local/bin/gog-login
 
-RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json /usr/local/lib/openclaw-railway/sidecar.mjs \
+RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json /usr/local/lib/openclaw-railway/sidecar.mjs /usr/local/lib/openclaw-railway/webhook-relay.mjs \
  && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/bin/as-node /usr/local/bin/gog-login /usr/local/sbin/openclaw /usr/local/sbin/brew \
  && node /app/openclaw.mjs --version \
  && tailscale version

@@ -25,18 +25,19 @@ probe-only health relay in `scripts/sidecar.mjs`, and one audit warning
 
 ## Local tests
 
-- `sh tests/image.test.sh`: core tier, **71 checks** in a full run (70 with
-  `SKIP_BUILD=1`), all passing, no tailnet needed. It covers the relay's 404
-  matrix and the Gateway port being unreachable from the network, loopback
-  authentication and proxy attribution, the entrypoint's refusals (missing or
-  rejected auth key, old-layout config, `PORT` collision), the `tailscaled`
-  watchdog, persistence, ownership repair, and crash handling.
+- `sh tests/image.test.sh`: core tier, **88 checks** in a full run, no tailnet
+  needed. It covers the relay's 404 matrix and the Gateway port being
+  unreachable from the network, loopback authentication and proxy attribution,
+  the webhook routes (token in header or path, refusals, 413, per-caller
+  lockout, off unless opted in), the entrypoint's refusals (missing or rejected
+  auth key, old-layout config, `PORT` collision, `hooks.gmail.tailscale.mode`),
+  the `tailscaled` watchdog, persistence, ownership repair, and crash handling.
 - The same script's **live tier** runs when `TAILSCALE_TEST_AUTHKEY` is set (a
   reusable, ephemeral key): real login, Serve URL, QR address, key hygiene,
-  restart reuse, watchdog: 10 checks, plus 3 for `gog-login`'s tailnet callback
-  route and 1 dashboard check when `TAILSCALE_TEST_ON_TAILNET=1` (the test
-  machine is on the tailnet). All 84 passed on 2026-10-08. CI passes the key
-  from an optional repository secret.
+  restart reuse, watchdog, and, with `TAILSCALE_TEST_ON_TAILNET=1`, the
+  dashboard over the tailnet and `gog-login`'s callback route: 13 checks. All
+  101 passed on 2026-10-08. CI passes the key from an optional repository
+  secret.
 - `npm run test:railway-config` (5 tests), `npm run typecheck`, ShellCheck,
   Hadolint, and actionlint.
 
@@ -82,8 +83,8 @@ health check through the relay, and the Mac app.
 | 11 | Tailscale configuration survives restarts | Verified (prototype) | Restart reused the saved login without `TS_AUTHKEY`; Serve came back (live tier check). |
 | 12 | Proxy attribution is handled securely | Verified | Ordinary listener: token → 200; forwarded or `Tailscale-User-Login` headers → 403 "Proxy client attribution is required", even with the token (tested). Tailscale identity counts only on OpenClaw's managed Serve listener, checked with `tailscale whois`. `trustedProxies` stays empty. [ARCHITECTURE.md](ARCHITECTURE.md#why-the-proxy-attribution-error-cannot-recur) |
 | 13 | The macOS desktop app can connect | Verified (live) | Previous layout: `openclaw-mac primary set --direct-url wss://openclaw.<tailnet>.ts.net --token-stdin`, paired, `connected`. Production migration to the one-service layout (2026-10-08): the app reconnected on its own to the same `wss://openclaw.<tailnet>.ts.net` (`connected`, Gateway 2026.9.8), and again after a later restart. |
-| 14 | Desktop device pairing works | Verified (previous layout); pairings carry over (live) | Previous layout: separate operator and node pairing requests stayed pending until `openclaw devices approve`, then connected. Migration: all 7 paired devices kept, 0 pending, and the Mac reconnected without re-approval. A brand-new device pairing on the new layout has not been run. With tailnet identity, browser operator sessions skip pairing (verified live: the dashboard opened signed in); node pairing still applies. |
-| 15 | Telegram integration works | Live validation required | Tested with a dummy token: `TELEGRAM_BOT_TOKEN` enables Telegram with `dmPolicy: pairing` / `groupPolicy: allowlist`, the token never lands on the volume, `channels add --use-env` works, and a bad token makes `/readyz` 503 while `/startupz` stays 200. A real bot DM not yet tried. |
+| 14 | Desktop device pairing works | Verified (live) | Previous layout: separate operator and node pairing requests stayed pending until `openclaw devices approve`, then connected. Migration: all 7 paired devices kept, 0 pending, and the Mac reconnected without re-approval. New device on the current layout (2026-10-08): a node host on a tailnet Mac connected to `wss://openclaw.<tailnet>.ts.net`, stayed pending ("device pairing required"), connected after `openclaw devices approve`, and was removed afterwards. Browser operator sessions sign in with tailnet identity (verified live). |
+| 15 | Telegram integration works | Verified (live) | Production (2026-10-08): `openclaw channels status --probe` reports Telegram enabled, connected, polling as the configured bot, probe `works`, after the migration. Token handling was tested with a dummy token: `TELEGRAM_BOT_TOKEN` enables Telegram with `dmPolicy: pairing` / `groupPolicy: allowlist` and never lands on the volume. |
 | 16 | Railway health checks reflect actual Gateway availability | Verified | `/startupz` through the relay from another container, including the `healthcheck.railway.app` Host header (tested). `/startupz` turns 200 only after Serve is claimed. On Railway (scratch deploy, 2026-10-08), the deploy reached `SUCCESS` through the relay. |
 | 17 | Security auditing is documented | Verified (prototype) | [SECURITY.md](SECURITY.md#security-audit). Fresh deployment: 0 critical, 1 warning `gateway.trusted_proxies_missing` (tested; generic for loopback Gateways, left on purpose). `--deep` not yet re-checked. |
 | 18 | Docker builds are reproducible | Verified | Base images and BuildKit frontend pinned by digest; release binaries checksum-verified; npm lockfiles; GitHub Actions pinned to commit SHAs. Debian packages (`jq`, `tmux`, ImageMagick) are deliberately unpinned ([UPGRADING.md](UPGRADING.md)). |
@@ -91,7 +92,18 @@ health check through the relay, and the Mac app.
 | 20 | CI validates the deployment configuration | Verified | `.github/workflows/ci.yml` (static checks and the image test) has passed on every push to `main`. The live tier runs in CI only when the `TAILSCALE_TEST_AUTHKEY` secret is set. |
 | 21 | Backup and rollback procedures are documented | Verified (docs) / restore live pending | [UPGRADING.md](UPGRADING.md). `openclaw backup create --verify` tested against a running Gateway. Railway backup restore not exercised. |
 | 22 | The repository can be deployed from GitHub to Railway | Verified (previous layout) / live validation required | Previous layout: `railway config apply` with `.railway/railway.ts` created the services from `main`, the images built on Railway, and the Gateway answered a real agent message through Anthropic. One-service layout: deployed from the branch into a scratch Railway project with `railway config apply` (2026-10-08); built, logged in to the tailnet, and passed the health check. Production migrated on 2026-10-08 ([UPGRADING.md](UPGRADING.md#migrating-from-the-two-service-layout)); state inventory unchanged afterwards. |
-| 23 | Suitable for a reusable public Railway template | Verified (config) / fresh template deploy pending | MIT licensed, public repository, no secrets, generated Gateway token. The published template was updated on 2026-10-08 to one service asking only for `TS_AUTHKEY` (checked through the API). The same configuration deployed from IaC into a scratch project; a fresh deploy from the published template itself has not been run. See [DEPLOYMENT.md](DEPLOYMENT.md#maintaining-the-railway-template). |
+| 23 | Suitable for a reusable public Railway template | Verified (live) | MIT licensed, public repository, no secrets, generated Gateway token. The published template (one service, asking only for `TS_AUTHKEY`) was deployed into a fresh project on 2026-10-08: it built, logged in, became `openclaw-1` because `openclaw` was taken, and Serve and the QR code followed the real name. |
+
+## Additional features verified live (2026-10-08)
+
+| Feature | Result |
+| --- | --- |
+| Opt-in webhooks ([WEBHOOKS.md](WEBHOOKS.md)) | Through a Railway domain on the production deployment: `POST /hooks/agent` with the token reached the restricted `mail_reader` agent and completed (`status: ok`); no token gave 401; targeting `main` gave 400. On a scratch deployment: path tokens worked, other paths and methods gave 404, and 20 failures locked out the caller even with rotating `X-Forwarded-For`/`X-Real-IP` headers, while a different real caller still got 401. |
+| Security audit with webhooks | 0 critical, 2 warnings after configuration (`trusted_proxies_missing`; `plugins.tools_reachable_permissive_policy`, about the user's own plugins and `main`'s full tool profile). |
+| Gmail push | Production: the existing `gog-gmail-watch-push` subscription was repointed to the Railway domain; `hooks.gmail` applied without a restart (watch registered, `gog gmail watch serve` on 127.0.0.1:8788); a real new-mail push became a `mail_reader` hook run that completed (`status=ok`, no delivery). Stale and synthetic pushes were ignored by `gog`. |
+| Portals | An agent opened a portal on its own Serve port; over the tailnet it returned the test page (200) with its ticket and 401 without. |
+| `gog-login` on production | Google redirected to `https://openclaw.<tailnet>.ts.net:8443/oauth2/callback` and `gog` received the authorization through the tailnet. |
+| Tailscale Funnel for webhooks | Not used: built and tested, but Funnel ingress never reached a userspace-mode node from this container (the official Tailscale container failed the same way). See [WEBHOOKS.md](WEBHOOKS.md#why-not-tailscale-funnel). |
 
 ## Live history (previous layout, 2026-10-08)
 

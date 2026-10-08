@@ -1,4 +1,5 @@
-// Runs beside the Gateway as `node`, started by the entrypoint. Two jobs:
+// Runs beside the Gateway as `node`, started by the entrypoint. Two jobs, plus
+// an opt-in third:
 //
 // 1. Run tailscaled. If it exits, stop the container (SIGTERM to PID 1, tini,
 //    which forwards it to the Gateway) so Railway restarts Tailscale and the
@@ -9,14 +10,26 @@
 //    general forwarder would make every caller on Railway's private network look
 //    like a local client to the Gateway.
 //
+// 3. With OPENCLAW_RAILWAY_WEBHOOKS on, also serve the webhook routes
+//    (webhook-relay.mjs) on PORT. They are public only if the service has a
+//    Railway domain.
+//
 // If this process itself dies, the relay stops but nothing restarts the
 // container. Railway only probes at deploy time, so the Gateway keeps serving.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { createWebhookHandler } from "./webhook-relay.mjs";
 
 const probePaths = new Set(["/healthz", "/readyz", "/startupz"]);
 const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
 const relayPort = Number(process.env.PORT || 8080);
+const webhooks = /^(on|1|true|yes)$/i.test(process.env.OPENCLAW_RAILWAY_WEBHOOKS ?? "")
+  ? createWebhookHandler({
+      gatewayPort,
+      gmailPort: Number(process.env.OPENCLAW_RAILWAY_GMAIL_WATCH_PORT || 8788),
+      hooksToken: process.env.OPENCLAW_HOOKS_TOKEN,
+    })
+  : null;
 
 // OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE: this repository's integration tests
 // only; see scripts/entrypoint.sh.
@@ -37,7 +50,8 @@ tailscaled?.on("exit", (code, signal) => {
 createServer(async (request, response) => {
   const path = new URL(request.url, "http://relay").pathname;
   if (!probePaths.has(path) || !["GET", "HEAD"].includes(request.method)) {
-    response.writeHead(404).end();
+    if (webhooks) await webhooks(request, response);
+    else response.writeHead(404).end();
     return;
   }
   try {

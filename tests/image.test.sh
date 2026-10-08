@@ -25,6 +25,7 @@ cd "$(dirname "$0")/.."
 
 image="${IMAGE:-openclaw-railway:test}"
 token="test-token-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+hooks_token="hooks-token-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 run_id="openclaw-test-$$"
 network="$run_id-network"
 gateway="$run_id-gateway"
@@ -47,7 +48,7 @@ check() {
 cleanup() {
   docker exec "$live" as-node tailscale logout >/dev/null 2>&1 || true
   docker rm -f "$gateway" "$watchdog" "$live" >/dev/null 2>&1 || true
-  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-live-state" >/dev/null 2>&1 || true
+  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-live-state" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -56,7 +57,23 @@ trap cleanup EXIT INT TERM
 start_gateway() {
   docker run -d --name "$gateway" --network "$network" -v "$run_id-state:/data" \
     -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 \
+    -e OPENCLAW_RAILWAY_WEBHOOKS=on -e OPENCLAW_HOOKS_TOKEN="$hooks_token" \
     "$image" node openclaw.mjs gateway --bind loopback --tailscale off --auth token >/dev/null
+}
+
+# Prints the status of a request to the webhook routes on PORT (8080), made from
+# another container on the network, the way Railway's edge delivers it when the
+# service has a domain. Extra arguments are name=value request headers; METHOD
+# overrides POST and BODY_BYTES sends a body of that many bytes.
+relay_status() {
+  path="$1"
+  shift
+  docker run --rm --network "$network" --entrypoint node "$image" -e '
+    const [method, url, size, ...pairs] = process.argv.slice(1);
+    const headers = { "content-type": "application/json", ...Object.fromEntries(pairs.map((pair) => pair.split(/=(.*)/s).slice(0, 2))) };
+    const body = method === "POST" ? (Number(size) > 0 ? "x".repeat(Number(size)) : JSON.stringify({ text: "relay test", mode: "next-heartbeat", agentId: "main" })) : undefined;
+    fetch(url, { method, headers, body }).then((response) => console.log(response.status), () => console.log("unreachable"));
+  ' "${METHOD:-POST}" "http://$(container_address "$gateway"):8080$path" "${BODY_BYTES:-0}" "$@"
 }
 
 container_address() {
@@ -199,6 +216,19 @@ docker run --rm -v "$run_id-old-state:/data" --entrypoint sh "$image" -c '
 expect_refusal "refuses a config from the previous two-service layout and names the migration" "openclaw config set gateway.bind loopback" \
   -v "$run_id-old-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
 
+# OpenClaw's Gmail watcher would run `tailscale funnel` on port 443.
+docker run --rm -v "$run_id-gmail-state:/data" --entrypoint sh "$image" -c '
+  mkdir -p /data/.openclaw && node -e "
+    const config = JSON.parse(require(\"node:fs\").readFileSync(\"/etc/openclaw-railway/openclaw.seed.json\", \"utf8\"));
+    config.hooks = { gmail: { tailscale: { mode: \"funnel\" } } };
+    require(\"node:fs\").writeFileSync(\"/data/.openclaw/openclaw.json\", JSON.stringify(config));"' >/dev/null
+expect_refusal "refuses hooks.gmail.tailscale.mode funnel, which would publish port 443" "hooks.gmail.tailscale.mode is funnel" \
+  -v "$run_id-gmail-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
+relay_without_opt_in="$(docker run --rm -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 -e OPENCLAW_GATEWAY_PORT=18789 --user node --entrypoint sh "$image" -c '
+  node /usr/local/lib/openclaw-railway/sidecar.mjs & sleep 2
+  node -e "fetch(\"http://127.0.0.1:8080/hooks/x\", { method: \"POST\" }).then((response) => console.log(response.status), () => console.log(\"unreachable\"))"')"
+check "webhook routes are off (404) unless OPENCLAW_RAILWAY_WEBHOOKS is set" '[ "$relay_without_opt_in" = 404 ]'
+
 log "first boot on an empty volume"
 start_gateway
 check "/startupz returns 200 through the health relay" 'wait_for_startup'
@@ -272,6 +302,40 @@ audit_problems() {
 # silence it would trust every process in the container. See SECURITY.md.
 check "the security audit has no critical findings and no warnings beyond trusted_proxies_missing" \
   '[ "$(audit_problems)" = "warn gateway.trusted_proxies_missing" ]'
+
+log "webhook routes on PORT (public only with a Railway domain)"
+gateway_cli config set hooks.enabled true >/dev/null 2>&1
+gateway_cli config set hooks.token '${OPENCLAW_HOOKS_TOKEN}' >/dev/null 2>&1
+gateway_cli config set hooks.allowedAgentIds '["main"]' --strict-json >/dev/null 2>&1
+attempt=0
+until [ "$(relay_status /hooks/wake "authorization=Bearer $hooks_token")" = 200 ] || [ "$attempt" -ge 20 ]; do
+  sleep 1
+  attempt=$((attempt + 1))
+done
+check "a hook with the token in an Authorization header reaches the Gateway (200)" \
+  '[ "$(relay_status /hooks/wake "authorization=Bearer $hooks_token")" = 200 ]'
+check "a hook with the token in x-openclaw-token reaches the Gateway (200)" \
+  '[ "$(relay_status /hooks/wake "x-openclaw-token=$hooks_token")" = 200 ]'
+check "a hook with the token as the last path segment reaches the Gateway (200)" \
+  '[ "$(relay_status "/hooks/wake/$hooks_token")" = 200 ]'
+check "a hook without the token is refused by the relay (401)" '[ "$(relay_status /hooks/wake)" = 401 ]'
+check "a hook with a wrong path token is refused (401)" '[ "$(relay_status /hooks/wake/not-the-token)" = 401 ]'
+check "spoofed forwarded and Tailscale identity headers are stripped, not trusted (200)" \
+  '[ "$(relay_status /hooks/wake "authorization=Bearer $hooks_token" tailscale-user-login=someone@example.com x-forwarded-for=100.64.0.9)" = 200 ]'
+check "GET is refused (404)" '[ "$(METHOD=GET relay_status /hooks/wake)" = 404 ]'
+for path in / /control-ui-config.json /v1/models; do
+  check "the relay refuses $path (404)" '[ "$(relay_status "$path" "authorization=Bearer $hooks_token")" = 404 ]'
+done
+check "the relay refuses a path that climbs out of /hooks (404)" \
+  '[ "$(relay_status "/hooks/../control-ui-config.json/$hooks_token")" = 404 ]'
+check "a body over 1 MiB is refused (413)" \
+  '[ "$(BODY_BYTES=2000000 relay_status /hooks/wake "authorization=Bearer $hooks_token")" = 413 ]'
+for attempt in $(seq 1 20); do relay_status /hooks/wake x-forwarded-for=203.0.113.7 >/dev/null; done
+check "20 failures from one caller lock that caller out (429)" \
+  '[ "$(relay_status /hooks/wake x-forwarded-for=203.0.113.7 "authorization=Bearer $hooks_token")" = 429 ]'
+check "other callers are not locked out" \
+  '[ "$(relay_status /hooks/wake x-forwarded-for=198.51.100.2 "authorization=Bearer $hooks_token")" = 200 ]'
+check "health checks still work alongside webhook routes" '[ "$(remote_status /healthz)" = 200 ]'
 
 log "state survives a restart"
 # /proc/1/environ belongs to node, so read it as node.

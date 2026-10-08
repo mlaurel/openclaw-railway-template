@@ -69,6 +69,10 @@ export default defineRailway(() => {
       OPENCLAW_MACHINE_DISPLAY_NAME: preserve(),
       // Password for gog's token file; see documentation/TOOLS.md.
       GOG_KEYRING_PASSWORD: preserve(),
+      // Opt-in webhooks; see documentation/WEBHOOKS.md.
+      OPENCLAW_RAILWAY_WEBHOOKS: preserve(),
+      OPENCLAW_HOOKS_TOKEN: preserve(),
+      OPENCLAW_GMAIL_PUSH_TOKEN: preserve(),
     },
   });
 
