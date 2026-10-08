@@ -45,11 +45,11 @@ used unchanged. The Tailscale container joined a real tailnet with an auth key
 | 7 | Persistent configuration survives redeployment | Verified (live) | Live: state on the `openclaw-state` volume survived a redeploy *and* a volume migration from `europe-west4` to `us-west2`; the baseline config was not rewritten. Pairing persistence verified locally and over a real tailnet. |
 | 8 | Gateway authentication is enforced | Verified | `--auth token` pinned; 401 without or with a wrong token from a remote peer; entrypoint refuses missing or short tokens; token-only clients without device identity get no operator scopes. |
 | 9 | The Gateway is not publicly exposed by default | Verified (config) / live check pending | `.railway/railway.ts` declares no domains or TCP proxies (tested); `serve.json` has no Funnel (tested). Confirm in the Railway dashboard after deploy. |
-| 10 | Tailscale provides authenticated private access | Verified with a real tailnet; Railway network pending | End-to-end test above: tailnet → Tailscale TLS → raw TCP forward → Gateway token auth and device pairing, with Docker DNS standing in for `openclaw.railway.internal`. Railway's own private DNS and dual-stack routing not yet exercised. |
+| 10 | Tailscale provides authenticated private access | Verified (live) | Live: the `tailscale` service joined the tailnet; from a tailnet Mac, `https://openclaw.<tailnet>.ts.net` (Let's Encrypt, trusted) and `:18789` reached the Gateway over Railway's private network; 401 without token, 200 with, 403 with a client-added `X-Forwarded-For`. Gateway logs show the peer as the Tailscale service's private IPv4 with `fwd=n/a`. |
 | 11 | Tailscale configuration survives restarts | Verified locally | Recreated the container without `TS_AUTHKEY` on the same state volume: same node, same tailnet IP, no re-authentication. A Railway volume is expected to behave the same; confirm in live step 8. |
 | 12 | Proxy attribution is handled securely | Verified | Header-free remote peer with token → 200; same request plus `X-Forwarded-For` or `Tailscale-User-Login` → 403 "Proxy client attribution is required". Repeated through real Tailscale Serve from a tailnet device. `trustedProxies` stays empty. [ARCHITECTURE.md](ARCHITECTURE.md#why-the-proxy-attribution-error-cannot-recur) |
-| 13 | The macOS desktop app can connect | Live validation required | Workflow in [DESKTOP.md](DESKTOP.md), from the 2026.9.8 macOS docs. Gateway side tested with a non-loopback client. The app itself not run. |
-| 14 | Desktop device pairing works | Live validation required | Tested with a headless node over `wss://` through Tailscale: the request stays pending, `openclaw devices approve` admits it, and pairing survives restarts of both services. Mac app pairing not run. |
+| 13 | The macOS desktop app can connect | Verified (live) | `openclaw-mac primary set --direct-url wss://openclaw.<tailnet>.ts.net --token-stdin`; after pairing approval the app reports `connected` (Gateway 2026.9.8) and uses chat, sessions, and models over the connection. |
+| 14 | Desktop device pairing works | Verified (live) | The Mac filed separate operator and node pairing requests from the Tailscale service's private IP; both stayed pending until `openclaw devices approve` over `railway ssh`, then connected. The node capability surface is a separate approval. |
 | 15 | Telegram integration works | Live validation required | Tested with a dummy token: `TELEGRAM_BOT_TOKEN` enables Telegram with `dmPolicy: pairing` / `groupPolicy: allowlist`, the token never lands on the volume, `channels add --use-env` works, and a bad token makes `/readyz` 503 while `/startupz` stays 200. A real bot DM not yet tried. |
 | 16 | Railway health checks reflect actual Gateway availability | Verified (live) | Railway marked every Gateway deploy SUCCESS only after `/startupz` returned 200 (including after migration). A token-less first deploy never became healthy and was replaced. `/startupz` ignores channel failures by design. |
 | 17 | Security auditing is documented | Verified | [SECURITY.md](SECURITY.md#security-audit). Tested: fresh boot → only `allowed_origins_required`; after `gateway.publicOrigin` → 0 critical, 0 warn. `--deep` adds upstream `gateway.probe_failed`, also seen on the unmodified official image. |
@@ -77,8 +77,12 @@ Project `openclaw`, environment `production`, region `us-west2`. Done so far:
   destructive-looking plans, and `apply` cannot move a volume's region; the
   service region must change instead (see TROUBLESHOOTING.md).
 
-Remaining: Tailscale on Railway (needs a tagged auth key), Mac app, Telegram,
-crash and backup drills.
+- Step 4: Tailscale on Railway joined the tailnet and served both routes; the
+  live security audit after setting `gateway.publicOrigin`: 0 critical, 0 warn
+  (`--deep` adds only the known upstream `gateway.probe_failed`).
+- Step 5: the macOS app connected as primary over `wss://` and was paired.
+
+Remaining: Telegram, Tailscale redeploy persistence, crash and backup drills.
 
 ## Live validation plan
 
