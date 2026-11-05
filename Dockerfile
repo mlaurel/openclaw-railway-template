@@ -2,7 +2,7 @@
 
 # Tailscale runs inside this container, next to the Gateway; only its two
 # binaries are taken from the official image. Dependabot tracks this pin.
-FROM tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065 AS tailscale
+FROM tailscale/tailscale:v1.104.4@sha256:ed6480b33c6eb67c9cbd203ed42b9fb57e361986725b6856def71b7a3d9e276c AS tailscale
 
 # The OpenClaw release this template deploys. This line is the single source of
 # truth for the version: an upgrade changes the tag and digest together and
