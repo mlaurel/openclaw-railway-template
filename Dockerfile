@@ -7,7 +7,7 @@ FROM tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3f
 # The OpenClaw release this template deploys. This line is the single source of
 # truth for the version: an upgrade changes the tag and digest together and
 # nothing else. See documentation/UPGRADING.md.
-FROM ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0ded1dd76939b2bf4d67ef2d13247b8b160aa5666331d4a0b0e58811182cbb8
+FROM ghcr.io/openclaw/openclaw:2026.11.3@sha256:e73f689d663567f0fe3c5a85c54beb3e102dc21f0814bf375e9039ee2d2df51b
 
 # Railway mounts volumes owned by root, so the container starts as root only
 # long enough for scripts/entrypoint.sh to prepare /data. The entrypoint then
